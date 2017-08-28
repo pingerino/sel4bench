@@ -11,9 +11,9 @@
 -->
 # sel4bench
 
-sel4 benchmarking applications and support library.
+sel4 benchmarking applications and support library for the experimental RT branch of the kernel.
 
-To get this project, check out the project manifest: https://github.com/seL4/sel4bench-manifest
+To get this project, check out the project manifest: https://github.com/seL4/sel4bench-manifest and initialiserepo with -b rt to get the rt branch of the manifest.
 
 # Applications
 
@@ -48,6 +48,9 @@ This is a hot cache benchmark of the signal path in the kernel, measured from us
 
 hot cache benchmark of a EDF and CFS user level scheduler implementation
 
+## criticality
+
+benchmarks mode switch cost, hot and cold cache
 
 ## aes
 
