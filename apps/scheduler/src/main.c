@@ -293,6 +293,109 @@ measure_yield_overhead(ccnt_t *results)
     }
 }
 
+#if CONFIG_NUM_CRITICALITIES > 1
+static void
+modeswitch(env_t *env, int crit, ccnt_t *up, ccnt_t *down, bool cold)
+{
+
+    seL4_CPtr sched_control = simple_get_sched_ctrl(&env->simple, 0);
+    ccnt_t start, end;
+    UNUSED int error;
+
+    for (int i = 0; i < N_RUNS; i++) {
+        /* switch up */
+        if (cold) {
+            seL4_BenchmarkFlushCaches();
+        }
+
+        SEL4BENCH_READ_CCNT(start);
+        error = seL4_SchedControl_SetCriticality(sched_control, crit);
+        assert(error == seL4_NoError);
+        SEL4BENCH_READ_CCNT(end);
+        up[i] = end - start;
+
+        COMPILER_MEMORY_FENCE();
+
+        /* switch back down */
+        SEL4BENCH_READ_CCNT(start);
+        error = seL4_SchedControl_SetCriticality(sched_control, seL4_MinCrit);
+        SEL4BENCH_READ_CCNT(end);
+        assert(error == seL4_NoError);
+        down[i] = end - start;
+    }
+}
+
+sel4utils_thread_t thread_array[NUM_THREADS];
+
+static void
+benchmark_modeswitch(env_t *env, scheduler_results_t *results, bool cold)
+{
+    int error;
+
+    sel4utils_thread_t *threads = thread_array;
+
+    /* first we'll show that the mode switch time is independant of the number of lo threads */
+    /* we already have 1 high crit thread (the current thread) */
+
+    /* now start 1 lo thread, then 2 threads, then 4 threads ... up to NUM_THREADS / 2
+     * and do the modeswitch */
+    int results_index = 0;
+    int prev_n_threads = 0;
+    for (int n_threads = 1; n_threads <= NUM_THREADS; n_threads *= 2) {
+        for (int i = prev_n_threads; i < n_threads; i++) {
+            error = sel4utils_start_thread(&threads[i], NULL, NULL, NULL, true);
+            ZF_LOGF_IF(error != seL4_NoError, "Failed to start thread");
+        }
+        prev_n_threads = n_threads;
+        if (cold) {
+            modeswitch(env, seL4_MaxCrit, results->modeswitch_vary_lo_cold[UP][results_index],
+                                      results->modeswitch_vary_lo_cold[DOWN][results_index], cold);
+        } else {
+
+            modeswitch(env, seL4_MaxCrit, results->modeswitch_vary_lo_hot[UP][results_index],
+                                      results->modeswitch_vary_lo_hot[DOWN][results_index], cold);
+        }
+        results_index++;
+    }
+
+    /* stop all the threads, set criticalities to hi */
+    for (int i = 0; i < NUM_THREADS; i++) {
+        error = seL4_TCB_Suspend(threads[i].tcb.cptr);
+        ZF_LOGF_IF(error != seL4_NoError, "Failed to stop thread %d", i);
+        error = seL4_TCB_SetCriticality(threads[i].tcb.cptr, seL4_MaxCrit);
+        ZF_LOGF_IF(error != seL4_NoError, "Failed to set criticality for thread %d", i);
+    }
+
+    /* now, show the mode switch time as we increase the number of hi threads */
+    results_index = 0;
+    /* note that the current thread is a hi thread, so we subtract one
+     * from the amount of threads we create by skipping the first one */
+    prev_n_threads = 1;
+    for (int n_threads = 1; n_threads <= NUM_THREADS; n_threads *= 2) {
+        for (int i = prev_n_threads; i < n_threads; i++) {
+            error = seL4_TCB_Resume(threads[i].tcb.cptr);
+            ZF_LOGF_IF(error != seL4_NoError, "Failed to start thread %d", i);
+        }
+        prev_n_threads = n_threads;
+        if (cold) {
+            modeswitch(env, seL4_MaxCrit, results->modeswitch_vary_hi_cold[UP][results_index],
+                                          results->modeswitch_vary_hi_cold[DOWN][results_index], cold);
+        } else {
+
+            modeswitch(env, seL4_MaxCrit, results->modeswitch_vary_hi_hot[UP][results_index],
+                                          results->modeswitch_vary_hi_hot[DOWN][results_index], cold);
+        }
+        results_index++;
+    }
+
+    /* stop all the threads */
+    for (int i = 0; i < NUM_THREADS; i++) {
+        error = seL4_TCB_Suspend(threads[i].tcb.cptr);
+        assert(error == 0);
+    }
+}
+#endif /* CONFIG_NUM_CRITICALITIES > 1 */
+
 void
 benchmark_set_prio_average(ccnt_t results[N_RUNS][NUM_AVERAGE_EVENTS])
 {
@@ -350,10 +453,10 @@ main(int argc, char **argv)
     scheduler_results_t *results;
 
     static size_t object_freq[seL4_ObjectTypeCount] = {
-        [seL4_TCBObject] = 6,
+        [seL4_TCBObject] = 6 + NUM_THREADS,
 #ifdef CONFIG_KERNEL_RT
-        [seL4_SchedContextObject] = 6,
-        [seL4_ReplyObject] = 6,
+        [seL4_SchedContextObject] = 6 + NUM_THREADS,
+        [seL4_ReplyObject] = 6 + NUM_THREADS,
 #endif
         [seL4_EndpointObject] = 1,
         [seL4_NotificationObject] = 2,
@@ -387,6 +490,25 @@ main(int argc, char **argv)
     benchmark_yield_thread(env, done_ep.cptr, results->thread_yield);
     benchmark_yield_process(env, done_ep.cptr, results->process_yield);
     benchmark_yield_average(results->average_yield);
+
+#if CONFIG_NUM_CRITICALITIES > 1
+    /* criticality change benchmarks */
+       /* create all the threads */
+    seL4_CapData_t null_data = {0};
+     sel4utils_thread_config_t config = thread_config_default(&env->simple, simple_get_cnode(&env->simple),
+             null_data, 0, 10);
+     config = thread_config_stack_size(config, 0);
+     config = thread_config_no_ipc_buffer(config);
+
+    for (int i = 0; i < NUM_THREADS; i++) {
+        error = sel4utils_configure_thread_config(&env->slab_vka, &env->vspace,
+                                                  &env->vspace, config, &thread_array[i]);
+        assert(error == 0);
+    }
+
+    benchmark_modeswitch(env, results, false);
+    benchmark_modeswitch(env, results, true);
+#endif
 
     /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);

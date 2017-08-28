@@ -45,7 +45,7 @@
 #define ALLOCATOR_VIRTUAL_POOL_SIZE ((1 << seL4_PageBits) * 200)
 
 /* static memory for the allocator to bootstrap with */
-#define ALLOCATOR_STATIC_POOL_SIZE ((1 << seL4_PageBits) * 100)
+#define ALLOCATOR_STATIC_POOL_SIZE ((1 << seL4_PageBits) * 200)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
 
 /* static memory for virtual memory bootstrapping */
@@ -110,6 +110,15 @@ run_benchmark(env_t *env, benchmark_t *benchmark, void *local_results_vaddr, ben
     config = process_config_mcp(config, seL4_MaxPrio);
     error = sel4utils_configure_process_custom(&process, &env->vka, &env->vspace, config);
     ZF_LOGF_IFERR(error, "Failed to configure process for %s benchmark", benchmark->name);
+
+#if CONFIG_NUM_CRITICALITIES > 1
+    /* set criticality */
+    error = seL4_TCB_SetCriticality(process.thread.tcb.cptr, seL4_MaxCrit);
+    ZF_LOGF_IFERR(error, "Failed to set criticality for %s benchmark", benchmark->name);
+
+    error = seL4_TCB_SetMCCriticality(process.thread.tcb.cptr, seL4_MaxCrit);
+    ZF_LOGF_IFERR(error, "Failed to set mccriticality for %s benchmark", benchmark->name);
+#endif /* CONFIG_NUM_CRITICALITIES > 1 */
 
     /* initialise timers for benchmark environment */
     sel4utils_copy_timer_caps_to_process(&args->to, &env->to, &env->vka, &process);
