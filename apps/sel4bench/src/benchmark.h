@@ -94,6 +94,7 @@ benchmark_t *irq_benchmark_new(void);
 benchmark_t *irquser_benchmark_new(void);
 benchmark_t *scheduler_benchmark_new(void);
 benchmark_t *signal_benchmark_new(void);
+benchmark_t *ulscheduler_benchmark_new(void);
 benchmark_t *fault_benchmark_new(void);
 benchmark_t *hardware_benchmark_new(void);
 benchmark_t *sync_benchmark_new(void);

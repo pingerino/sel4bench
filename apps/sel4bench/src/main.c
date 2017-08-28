@@ -255,6 +255,7 @@ main_continued(void *arg)
         irquser_benchmark_new(),
         scheduler_benchmark_new(),
         signal_benchmark_new(),
+        ulscheduler_benchmark_new(),
         fault_benchmark_new(),
         hardware_benchmark_new(),
         sync_benchmark_new(),
