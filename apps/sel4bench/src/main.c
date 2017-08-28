@@ -20,6 +20,7 @@
 #include <simple/simple.h>
 #include <simple-default/simple-default.h>
 
+#include <aes.h>
 #include <sel4debug/register_dump.h>
 #include <serial_server/parent.h>
 #include <sel4platsupport/device.h>
@@ -267,6 +268,7 @@ main_continued(void *arg)
         ulscheduler_benchmark_new(),
         fault_benchmark_new(),
         hardware_benchmark_new(),
+        aes_benchmark_new(),
         sync_benchmark_new(),
         /* add new benchmarks here */
         page_mapping_benchmark_new(),

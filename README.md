@@ -48,6 +48,11 @@ This is a hot cache benchmark of the signal path in the kernel, measured from us
 
 hot cache benchmark of a EDF and CFS user level scheduler implementation
 
+
+## aes
+
+benchmarks timeout fault handling in a passive aes server
+
 ## smp
 
 This is an intra-core ipc round-trip benchmark to check overhead of the kernel synchronization on ipc throughput.

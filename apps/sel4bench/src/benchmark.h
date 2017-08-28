@@ -97,6 +97,7 @@ benchmark_t *signal_benchmark_new(void);
 benchmark_t *ulscheduler_benchmark_new(void);
 benchmark_t *fault_benchmark_new(void);
 benchmark_t *hardware_benchmark_new(void);
+benchmark_t *aes_benchmark_new(void);
 benchmark_t *sync_benchmark_new(void);
 benchmark_t *page_mapping_benchmark_new(void);
 benchmark_t *smp_benchmark_new(void);
