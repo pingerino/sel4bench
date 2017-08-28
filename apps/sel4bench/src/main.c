@@ -267,6 +267,7 @@ main_continued(void *arg)
         signal_benchmark_new(),
         ulscheduler_benchmark_new(),
         fault_benchmark_new(),
+        timeout_benchmark_new(),
         hardware_benchmark_new(),
         aes_benchmark_new(),
         sync_benchmark_new(),

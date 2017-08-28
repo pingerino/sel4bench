@@ -72,6 +72,27 @@
     ); \
 } while(0)
 
+#define DO_SEND_10(ep, tag, sys) do { \
+    uint32_t ep_copy = ep; \
+    uint32_t tag_copy = tag.words[0]; \
+    asm volatile( \
+        "movl %%esp, %%ecx \n"\
+        "leal 1f, %%edx \n"\
+        "1: \n" \
+        sys" \n" \
+        : \
+         "+S" (tag_copy), \
+         "+b" (ep_copy) \
+        : \
+         "a" (seL4_SysSend) \
+        : \
+         "ecx", \
+         "edx" \
+         "edi"\
+    ); \
+} while(0)
+
+
 #ifdef CONFIG_KERNEL_RT
 #define DO_REPLY_RECV(ep, tag, ro, sys) do { \
     uint32_t ep_copy = ep; \
@@ -207,6 +228,7 @@
 #define DO_REAL_CALL_10(ep, tag) DO_CALL_10(ep, tag, "sysenter")
 #define DO_NOP_CALL_10(ep, tag) DO_CALL_10(ep, tag, ".byte 0x66\n.byte 0x90")
 #define DO_REAL_SEND(ep, tag) DO_SEND(ep, tag, "sysenter")
+#define DO_NOP_SEND_10(ep, tag) DO_SEND_10(ep, tag, ".byte 0x66\n.byte 0x90")
 #define DO_NOP_SEND(ep, tag) DO_SEND(ep, tag, ".byte 0x66\n.byte 0x90")
 #define DO_REAL_REPLY_RECV(ep, tag, ro) DO_REPLY_RECV(ep, tag, ro, "sysenter")
 #define DO_NOP_REPLY_RECV(ep, tag, ro) DO_REPLY_RECV(ep, tag, ro, ".byte 0x66\n.byte 0x90")
