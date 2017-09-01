@@ -47,10 +47,20 @@ static sel4utils_checkpoint_t cp;
 static sel4utils_thread_t tfep_thread;
 static sel4utils_thread_t server_thread;
 static sel4utils_thread_t clients[N_CLIENTS];
-static cspacepath_t slot;
-static seL4_CPtr done_ep;
-static seL4_CPtr init_ep;
-static seL4_CPtr stop_ep;
+
+/* EP for client <-> server communication */
+static vka_object_t ep;
+/* EP clients use to signal they are finished */
+static vka_object_t done_ep;
+/* EP server uses to initialise */
+static vka_object_t init_ep;
+/* EP clients block on when they are done */
+static vka_object_t stop_ep;
+/* Timeout fault EP */
+static vka_object_t timeout_ep;
+
+static char timeout_args[N_TIMEOUT_ARGS][WORD_STRING_SIZE];
+static char *timeout_argv[N_TIMEOUT_ARGS];
 
 #define THROUGHPUT_SIZE (1024 * 1024)
 
@@ -79,7 +89,7 @@ void server_fn(seL4_CPtr ep, seL4_CPtr reply)
 
 
     ZF_LOGV("Server started\n");
-    seL4_NBSendRecv(init_ep, seL4_MessageInfo_new(0, 0, 0, 0), ep, NULL, reply);
+    seL4_NBSendRecv(init_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 0), ep, NULL, reply);
 
     for (int req = 0; true; req++) {
         assert(st == NULL);
@@ -177,23 +187,19 @@ counting_client_fn(seL4_CPtr ep, uint64_t *res)
     SEL4BENCH_READ_CCNT(start);
     while (mr3 > 0) {
         info = seL4_CallWithMRs(ep, info, &mr0, &mr1, &mr2, &mr3);
-        /* did not make any progress */
-        if (mr3 >= THROUGHPUT_SIZE) {
-            ZF_LOGF("Failed to make progress\n");
-        }
     }
     SEL4BENCH_READ_CCNT(end);
     *res = end - start;
 
-    seL4_Send(done_ep, info);
-    seL4_Wait(stop_ep, NULL);
+    seL4_Send(done_ep.cptr, info);
+    seL4_Wait(stop_ep.cptr, NULL);
 }
 
 static inline void
 kill_child(seL4_CPtr ep)
 {
     /* invoke the reply cap  - this will return the client sc along the call chain */
-    seL4_Send(slot.capPtr, seL4_MessageInfo_new(0, 0, 0, 0));
+    seL4_Send(server_thread.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
 
     //give server time to get back on ep (or could extend client budget)
     int error = seL4_SchedContext_Bind(server_thread.sched_context.cptr, server_thread.tcb.cptr);
@@ -206,7 +212,7 @@ kill_child(seL4_CPtr ep)
 
     ZF_LOGD("Waiting for server to reply\n");
     // wait for server to init and take context back
-    seL4_Wait(init_ep, NULL);
+    seL4_Wait(init_ep.cptr, NULL);
 
     /* convert server back to passive */
     error = seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
@@ -238,7 +244,7 @@ tfep_fn_kill(int argc, char **argv)
     /* hot cache */
     for (int j = 0; j < (N_RUNS / N_CLIENTS); j++) {
         for (int i = 0; i < N_CLIENTS; i++) {
-            ZF_LOGV("Fault from %d\n", data);
+            ZF_LOGV("Fault from %"PRIuPTR"\n", data);
             assert(data < N_CLIENTS);
             SEL4BENCH_READ_CCNT(start);
             kill_child(ep);
@@ -251,7 +257,7 @@ tfep_fn_kill(int argc, char **argv)
     /* cold cache */
     for (int j = 0; j < N_RUNS / N_CLIENTS; j++) {
         for (int i = 0; i < N_CLIENTS; i++) {
-            ZF_LOGV("Fault from %d\n", data);
+            ZF_LOGV("Fault from %"PRIuPTR"\n", data);
             assert(data < N_CLIENTS);
             seL4_BenchmarkFlushCaches();
             SEL4BENCH_READ_CCNT(start);
@@ -262,8 +268,8 @@ tfep_fn_kill(int argc, char **argv)
         restart_clients();
     }
 
-    seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
-    seL4_Wait(stop_ep, NULL);
+    seL4_Send(done_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
+    seL4_Wait(stop_ep.cptr, NULL);
 }
 
 static inline void
@@ -299,17 +305,17 @@ handle_timeout_rollback(seL4_CPtr ep, seL4_Word badge)
 {
     /* restore client */
     if (st != NULL) {
-        ZF_LOGV("Restored client %d, %u left\n", badge, st->len);
+        ZF_LOGV("Restored client %"PRIuPTR", %"PRIuPTR" left\n", badge, st->len);
         seL4_SetMR(0, (seL4_Word) st->vector);
         seL4_SetMR(1, (seL4_Word) st->pt);
         seL4_SetMR(2, (seL4_Word) st->ct);
         seL4_SetMR(3, (seL4_Word) st->len);
     } else {
         ZF_LOGV("Failed\n");
-        seL4_SetMR(3, sizeof(dummy_pt));
+        seL4_SetMR(3, THROUGHPUT_SIZE);
     }
     /* reply to client */
-    seL4_Send(slot.capPtr, seL4_MessageInfo_new(0, 0, 0, 4));
+    seL4_Send(server_thread.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
 
     st = NULL;
     sel4utils_checkpoint_restore(&cp, false, true);
@@ -318,7 +324,7 @@ handle_timeout_rollback(seL4_CPtr ep, seL4_Word badge)
     assert(error == 0);
 
      // wait for server to init and take context back
-    seL4_Wait(init_ep, NULL);
+    seL4_Wait(init_ep.cptr, NULL);
 
     /* convert server back to passive */
     error = seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
@@ -336,7 +342,7 @@ tfep_fn_emergency_budget(int argc, char **argv)
     ccnt_t start, end;
      for (int i = 0; i < N_RUNS; i++) {
         seL4_Recv(tfep, &badge, reply);
-        ZF_LOGV("Fault from %d\n", seL4_GetMR(0));
+        ZF_LOGV("Fault from %"PRIuPTR"\n", seL4_GetMR(0));
         SEL4BENCH_READ_CCNT(start);
         handle_timeout_emergency_budget(ep, seL4_GetMR(seL4_Timeout_Data), reply);
         /* call the server with a fake finished request */
@@ -352,7 +358,7 @@ tfep_fn_emergency_budget(int argc, char **argv)
     /* cold cache */
     for (int i = 0; i < N_RUNS; i++) {
         seL4_Recv(tfep, &badge, reply);
-        ZF_LOGV("Fault from %d\n", seL4_GetMR(0));
+        ZF_LOGV("Fault from %"PRIuPTR"\n", seL4_GetMR(0));
         seL4_BenchmarkFlushCaches();
         SEL4BENCH_READ_CCNT(start);
         handle_timeout_emergency_budget(ep, seL4_GetMR(seL4_Timeout_Data), reply);
@@ -366,8 +372,8 @@ tfep_fn_emergency_budget(int argc, char **argv)
     }
 
     /* finished */
-	seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
-    seL4_Wait(stop_ep, NULL);
+	seL4_Send(done_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
+    seL4_Wait(stop_ep.cptr, NULL);
 }
 
 /* timeout fault handler for doing rollbacks */
@@ -384,7 +390,7 @@ tfep_fn_rollback(int argc, char **argv)
     /* hot cache */
     for (int i = 0; i < N_RUNS; i++) {
         seL4_Recv(tfep, &badge, reply);
-        ZF_LOGV("Fault from %d\n", seL4_GetMR(0));
+        ZF_LOGV("Fault from %"PRIuPTR"\n", seL4_GetMR(0));
         SEL4BENCH_READ_CCNT(start);
         handle_timeout_rollback(ep, badge);
         SEL4BENCH_READ_CCNT(end);
@@ -394,7 +400,7 @@ tfep_fn_rollback(int argc, char **argv)
     /* cold cache */
     for (int i = 0; i < N_RUNS; i++) {
         seL4_Recv(tfep, &badge, reply);
-        ZF_LOGV("Fault from %d\n", seL4_GetMR(0));
+        ZF_LOGV("Fault from %"PRIuPTR"\n", seL4_GetMR(0));
         seL4_BenchmarkFlushCaches();
         SEL4BENCH_READ_CCNT(start);
         handle_timeout_rollback(ep, badge);
@@ -404,8 +410,8 @@ tfep_fn_rollback(int argc, char **argv)
     }
 
     /* finished */
-	seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
-    seL4_Wait(stop_ep, NULL);
+	seL4_Send(done_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
+    seL4_Wait(stop_ep.cptr, NULL);
 }
 
 void tfep_fn_rollback_infinite(int arc, char **argv) {
@@ -451,7 +457,7 @@ tfep_fn_extend(int argc, char **argv)
         /* set the clients budgets to be small */
         /* hot cache */
         for (int i = 0; i < N_CLIENTS; i++) {
-            ZF_LOGV("Fault from %d\n", data);
+            ZF_LOGV("Fault from %"PRIuPTR"\n", data);
             assert(data < N_CLIENTS);
             budgets[data] += US_IN_MS;
             SEL4BENCH_READ_CCNT(start);
@@ -465,7 +471,7 @@ tfep_fn_extend(int argc, char **argv)
         /* cold cache */
         reset_budgets(sched_ctrl, budgets);
         for (int i = 0; i < N_CLIENTS; i++) {
-                ZF_LOGV("Fault from %d\n", data);
+                ZF_LOGV("Fault from %"PRIiPTR"\n", data);
                 budgets[data] += US_IN_MS;
                 seL4_BenchmarkFlushCaches();
                 SEL4BENCH_READ_CCNT(start);
@@ -480,8 +486,8 @@ tfep_fn_extend(int argc, char **argv)
 
     /* finished */
     seL4_Send(reply, seL4_MessageInfo_new(0, 0, 0, 0));
-	seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
-    seL4_Wait(stop_ep, NULL);
+	seL4_Send(done_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
+    seL4_Wait(stop_ep.cptr, NULL);
 }
 
 void
@@ -510,13 +516,11 @@ void benchmark_start_server_tf(env_t *env, seL4_CPtr ep, seL4_CPtr tfep, void *t
     ZF_LOGF_IF(error, "Failed to configure server sc");
 
     error = sel4utils_start_thread(&server_thread, (sel4utils_thread_entry_fn) server_fn, (void *) ep,
-            (void *) slot.capPtr, true);
+            (void *) server_thread.reply.cptr, true);
     ZF_LOGF_IF(error != 0, "Failed to start server");
 
-
-
     /* wait for server to init and convert to passive */
-    seL4_Wait(init_ep, NULL);
+    seL4_Wait(init_ep.cptr, NULL);
     error = seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
     ZF_LOGF_IF(error != seL4_NoError, "Failed to convert server to passive");
 
@@ -524,8 +528,6 @@ void benchmark_start_server_tf(env_t *env, seL4_CPtr ep, seL4_CPtr tfep, void *t
     sel4utils_checkpoint_thread(&server_thread, &cp, false);
 
     /* start the temporal fault handler */
-    char timeout_args[N_TIMEOUT_ARGS][WORD_STRING_SIZE];
-    char *timeout_argv[N_TIMEOUT_ARGS];
     sel4utils_create_word_args(timeout_args, timeout_argv, N_TIMEOUT_ARGS, arg0, arg1, arg2);
 
     error = sel4utils_start_thread(&tfep_thread, timeout_fn, (void *) N_TIMEOUT_ARGS, timeout_argv, true);
@@ -546,8 +548,22 @@ benchmark_setup(env_t *env, seL4_CPtr ep, seL4_CPtr tfep, void *timeout_fn, seL4
 
     /* create and start the clients */
     for (int i = 0; i < N_CLIENTS; i++) {
-        /* set client budget */
-        int error = sel4utils_start_thread(&clients[i], (sel4utils_thread_entry_fn) client_fn, (void *) ep, (void *) done_ep, true);
+        benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "client", &clients[i]);
+        /* unbind the clients sc before reconfiguring so we start afresh */
+        int error = seL4_SchedContext_Unbind(clients[i].sched_context.cptr);
+        ZF_LOGF_IF(error, "Failed to unbind client sc");
+
+        /* set budget */
+        error = seL4_SchedControl_Configure(simple_get_sched_ctrl(&env->simple, 0),
+                clients[i].sched_context.cptr, 5 * US_IN_MS, 10 * US_IN_MS, 0, i);
+        ZF_LOGF_IF(error != seL4_NoError, "Failed to configure sc");
+
+        /* rebind */
+        error = seL4_SchedContext_Bind(clients[i].sched_context.cptr, clients[i].tcb.cptr);
+        ZF_LOGF_IF(error != seL4_NoError, "Failed to rebind sc");
+
+        /* start the client */
+        error = sel4utils_start_thread(&clients[i], (sel4utils_thread_entry_fn) client_fn, (void *) ep, (void *) done_ep.cptr, true);
         ZF_LOGF_IF(error != seL4_NoError, "failed to start client %d\n", i);
     }
 }
@@ -583,11 +599,10 @@ int
 main(int argc, char **argv)
 {
     UNUSED int error;
-    vka_object_t ep, tfep, timeout_reply, server_reply;
 
     object_freq[seL4_TCBObject] = 2 + N_CLIENTS;
     object_freq[seL4_EndpointObject] = 4;
-    object_freq[seL4_ReplyObject] = 2;
+    object_freq[seL4_ReplyObject] = 2 + N_CLIENTS;
     object_freq[seL4_SchedContextObject] = 2 + N_CLIENTS;
 
     sel4bench_init();
@@ -601,74 +616,52 @@ main(int argc, char **argv)
     ZF_LOGF_IF(error != 0, "Failed to allocate ep");
 
     /* allocate an init ep for server <-> tfep */
-    vka_object_t init_epo;
-    error = vka_alloc_endpoint(&env->slab_vka, &init_epo);
+    error = vka_alloc_endpoint(&env->slab_vka, &init_ep);
     ZF_LOGF_IF(error != 0, "Failed to allocate ep");
-    init_ep = init_epo.cptr;
 
     /* allocate a timeout ep */
-    error = vka_alloc_endpoint(&env->slab_vka, &tfep);
+    error = vka_alloc_endpoint(&env->slab_vka, &timeout_ep);
     ZF_LOGF_IF(error != 0, "Failed to allocate tfep");
 
-    /* allocate a reply object for server*/
-    error = vka_alloc_reply(&env->slab_vka, &server_reply);
-    ZF_LOGF_IF(error != 0, "Failed to allocate cslot for tfep");
-    vka_cspace_make_path(&env->slab_vka, server_reply.cptr, &slot);
-
-    /* allocate a reply object for timeout handlers */
-    error = vka_alloc_reply(&env->slab_vka, &timeout_reply);
-    ZF_LOGF_IF(error != 0, "Failed to allocate cslot for tfep");
-
     /* create an ep for clients to signal on when they are done */
-    vka_object_t done;
-    error = vka_alloc_endpoint(&env->slab_vka, &done);
+    error = vka_alloc_endpoint(&env->slab_vka, &done_ep);
     ZF_LOGF_IF(error != seL4_NoError, "Failed to allocate ep");
-    done_ep = done.cptr;
 
     /* create an ep for clients to block on when they are done */
-    vka_object_t stop;
-    error = vka_alloc_endpoint(&env->slab_vka, &stop);
+    error = vka_alloc_endpoint(&env->slab_vka, &stop_ep);
     ZF_LOGF_IF(error != seL4_NoError, "Failed to allocate ep");
-    stop_ep = stop.cptr;
 
     /* allocate threads */
     benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, "server", &server_thread);
     benchmark_configure_thread(env, 0, seL4_MaxPrio - 1, "tfep", &tfep_thread);
-    for (int i = 0; i < N_CLIENTS; i++) {
-        benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "client", &clients[i]);
-        /* set client budget */
-        error = seL4_SchedControl_Configure(simple_get_sched_ctrl(&env->simple, 0),
-                clients[i].sched_context.cptr, 5 * US_IN_MS, 10 * US_IN_MS, 0, i);
-        ZF_LOGF_IF(error != seL4_NoError, "Failed to configure sc");
-    }
 
     /* set servers tfep */
     seL4_CapData_t guard = seL4_CapData_Guard_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS);
-    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, tfep.cptr,
+    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, timeout_ep.cptr,
                               SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
                               seL4_CapData_Guard_new(0, 0));
 
     ZF_LOGV("Starting rollback benchmark\n");
-    benchmark_setup(env, ep.cptr, tfep.cptr, tfep_fn_rollback, tfep.cptr, ep.cptr, timeout_reply.cptr);
+    benchmark_setup(env, ep.cptr, timeout_ep.cptr, tfep_fn_rollback, timeout_ep.cptr, ep.cptr, tfep_thread.reply.cptr);
     /* wait for timeout fault handler to finish - it will exit once it has enough samples */
-    benchmark_wait_children(done.cptr, "tfep", 1);
+    benchmark_wait_children(done_ep.cptr, "tfep", 1);
     benchmark_teardown(env);
 
     /* next benchmark - use emergency sc's instead */
     ZF_LOGV("Starting emergency budget benchmark\n");
-    benchmark_setup(env, ep.cptr, tfep.cptr, tfep_fn_emergency_budget, tfep.cptr, ep.cptr, timeout_reply.cptr);
-    benchmark_wait_children(done.cptr, "tfep", 1);
+    benchmark_setup(env, ep.cptr, timeout_ep.cptr, tfep_fn_emergency_budget, timeout_ep.cptr, ep.cptr, tfep_thread.reply.cptr);
+    benchmark_wait_children(done_ep.cptr, "tfep", 1);
     benchmark_teardown(env);
 
     ZF_LOGV("Running extend benchmark");
-    benchmark_setup(env, ep.cptr, tfep.cptr, tfep_fn_extend, tfep.cptr,
-            simple_get_sched_ctrl(&env->simple, 0), timeout_reply.cptr);
-    benchmark_wait_children(done.cptr, "tfep-extend", 1);
+    benchmark_setup(env, ep.cptr, timeout_ep.cptr, tfep_fn_extend, timeout_ep.cptr,
+            simple_get_sched_ctrl(&env->simple, 0), tfep_thread.reply.cptr);
+    benchmark_wait_children(done_ep.cptr, "tfep-extend", 1);
     benchmark_teardown(env);
 
     ZF_LOGV("Running kill benchmark");
-    benchmark_setup(env, ep.cptr, tfep.cptr, tfep_fn_kill, tfep.cptr, ep.cptr, 0);
-    benchmark_wait_children(done.cptr, "tfep-kill", 1);
+    benchmark_setup(env, ep.cptr, timeout_ep.cptr, tfep_fn_kill, timeout_ep.cptr, ep.cptr, 0);
+    benchmark_wait_children(done_ep.cptr, "tfep-kill", 1);
     benchmark_teardown(env);
 
     ZF_LOGV("Running shared passive server benchmark");
@@ -677,7 +670,7 @@ main(int argc, char **argv)
     benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "B", &clients[1]);
 
     /* start the server and timeout fault handler - they both keep running throughout this entire benchmark */
-    benchmark_start_server_tf(env, ep.cptr, tfep.cptr, tfep_fn_rollback_infinite, tfep.cptr, ep.cptr, timeout_reply.cptr);
+    benchmark_start_server_tf(env, ep.cptr, timeout_ep.cptr, tfep_fn_rollback_infinite, timeout_ep.cptr, ep.cptr, tfep_thread.reply.cptr);
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
         /* configure A */
@@ -686,17 +679,32 @@ main(int argc, char **argv)
         seL4_Word refills = 0;//seL4_MaxExtraRefills(seL4_MinSchedContextBits);
 
         if (a_budget) {
+            error = seL4_SchedContext_Unbind(clients[0].sched_context.cptr);
+            ZF_LOGF_IF(error, "Failed to unbind A");
+
             error = seL4_SchedControl_Configure(simple_get_sched_ctrl(&env->simple, 0),
-                clients[0].sched_context.cptr, a_budget, 10 * US_IN_MS, refills, 0);
+                clients[0].sched_context.cptr, a_budget, PERIOD, refills, 0);
             ZF_LOGF_IF(error, "Failed to configure A");
+
+            error = seL4_SchedContext_Bind(clients[0].sched_context.cptr, clients[0].tcb.cptr);
+            ZF_LOGF_IF(error, "Failed to rebind A");
         }
 
         if (b_budget) {
+            error = seL4_SchedContext_Unbind(clients[1].sched_context.cptr);
+            ZF_LOGF_IF(error, "Failed to unbind B");
+
             error = seL4_SchedControl_Configure(simple_get_sched_ctrl(&env->simple, 0),
-                clients[1].sched_context.cptr, b_budget, 10 * US_IN_MS, refills, 1);
+                clients[1].sched_context.cptr, b_budget, PERIOD, refills, 1);
             ZF_LOGF_IF(error, "Failed to configure B");
+
+
+            error = seL4_SchedContext_Bind(clients[1].sched_context.cptr, clients[1].tcb.cptr);
+            ZF_LOGF_IF(error, "Failed to rebind B");
         }
 
+        ZF_LOGV("A: %"PRIu64"/%"PRIu64"\n", a_budget, (uint64_t) PERIOD);
+        ZF_LOGV("B: %"PRIu64"/%"PRIu64"\n", b_budget, (uint64_t) PERIOD);
         for (int j = 0; j  < N_RUNS; j++) {
             ZF_LOGV("Throughput %d: %d\n", i, j);
 
@@ -716,7 +724,7 @@ main(int argc, char **argv)
                 results->throughput_B[i][j] = 0;
             }
 
-            benchmark_wait_children(done_ep, "B", !!a_budget + !!b_budget);
+            benchmark_wait_children(done_ep.cptr, "B", !!a_budget + !!b_budget);
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->throughput_A[i][j], results->throughput_B[i][j]);
             seL4_TCB_Suspend(clients[0].tcb.cptr);
             seL4_TCB_Suspend(clients[1].tcb.cptr);
