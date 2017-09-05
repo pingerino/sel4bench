@@ -31,6 +31,7 @@ typedef struct aes_results {
     ccnt_t overhead[N_RUNS];
     ccnt_t throughput_A[N_THROUGHPUT][N_RUNS];
     ccnt_t throughput_B[N_THROUGHPUT][N_RUNS];
+    ccnt_t throughput_baseline[N_THROUGHPUT][N_RUNS];
 } aes_results_t;
 
 

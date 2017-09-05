@@ -101,6 +101,16 @@ aes_process(void *results)
     }
     json_array_append_new(array, result_set_to_json(set));
 
+    /* process baseline results */
+    set.name = "baseline throughput";
+    desc.name = set.name;
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = get_budget_for_index(i);
+        throughput_results[i] = process_result(N_RUNS, raw_results->throughput_baseline[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+
     return array;
 }
 

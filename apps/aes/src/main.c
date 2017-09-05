@@ -679,6 +679,31 @@ main(int argc, char **argv)
         }
     }
 
+    ZF_LOGD("Running base line throughput benchmark");
+
+    /* remove the servers tfep */
+    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, seL4_CapNull,
+                              SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
+                              seL4_CapData_Guard_new(0, 0));
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        uint64_t a_budget = get_budget_for_index(i);
+        for (int j = 0; j < N_RUNS; j++) {
+            if (a_budget) {
+                benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
+                reset_sc(env, a_budget, PERIOD, 0, 1, &clients[0]);
+                error = sel4utils_start_thread(&clients[0], counting_client_fn,
+                        (void *) ep.cptr, (void *) &results->throughput_baseline[i][j], true);
+                ZF_LOGF_IF(error, "Failed to start A");
+                benchmark_wait_children(done_ep.cptr, "A", 1);
+                seL4_TCB_Suspend(clients[0].tcb.cptr);
+                seL4_TCB_Suspend(server_thread.tcb.cptr);
+                seL4_TCB_Suspend(tfep_thread.tcb.cptr);
+            } else {
+                results->throughput_baseline[i][j] = 0;
+            }
+        }
+    }
+
     /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);
     return 0;
