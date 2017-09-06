@@ -435,9 +435,9 @@ benchmark_set_prio(env_t *env, scheduler_results_t *results, bool cold)
             } else {
                 results->prio_hot[results_index][j] = end - start;
             }
-            results_index++;
-            prio++;
         }
+        results_index++;
+        prio++;
     }
 
     /* stop all the threads */
