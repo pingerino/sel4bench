@@ -19,6 +19,12 @@
 #define PERIOD (10 * US_IN_MS)
 #define BUDGET 2000
 
+typedef struct {
+    ccnt_t A[N_THROUGHPUT][N_RUNS];
+    ccnt_t B[N_THROUGHPUT][N_RUNS];
+    ccnt_t baseline[N_THROUGHPUT][N_RUNS];
+} tput_results_t;
+
 typedef struct aes_results {
     ccnt_t rollback_cost[N_RUNS];
     ccnt_t rollback_cost_cold[N_RUNS];
@@ -29,14 +35,14 @@ typedef struct aes_results {
     ccnt_t kill_cost[N_RUNS];
     ccnt_t kill_cost_cold[N_RUNS];
     ccnt_t overhead[N_RUNS];
-    ccnt_t throughput_A[N_THROUGHPUT][N_RUNS];
-    ccnt_t throughput_B[N_THROUGHPUT][N_RUNS];
-    ccnt_t throughput_baseline[N_THROUGHPUT][N_RUNS];
+    tput_results_t ten_ms;
+    tput_results_t hundred_ms;
+    tput_results_t thousand_ms;
 } aes_results_t;
 
 
 
-static inline int get_budget_for_index(int i)
+static inline int get_budget_for_index(int i, uint64_t step)
 {
-    return i * BUDGET;
+    return i * step;
 }

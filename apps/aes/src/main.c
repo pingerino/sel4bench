@@ -562,6 +562,82 @@ benchmark_teardown(env_t *env)
     assert(error == seL4_NoError);
 }
 
+static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t *results, env_t *env)
+{
+
+    /* reset timeout fault ep */
+    seL4_CapData_t guard = seL4_CapData_Guard_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS);
+    int error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, timeout_ep.cptr,
+                              SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
+                              seL4_CapData_Guard_new(0, 0));
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        /* configure A */
+        uint64_t a_budget = get_budget_for_index(i, step);
+        uint64_t b_budget = period - a_budget;
+        seL4_Word refills = 0;//seL4_MaxExtraRefills(seL4_MinSchedContextBits);
+        ZF_LOGD("A: %"PRIu64"/%"PRIu64, a_budget, (uint64_t) period);
+        ZF_LOGD("B: %"PRIu64"/%"PRIu64, b_budget, (uint64_t) period);
+
+        for (int j = 0; j  < N_RUNS; j++) {
+            ZF_LOGD("Throughput %d: %d\n", i, j);
+            /* start the server and timeout fault handler */
+            benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
+
+            if (a_budget) {
+                reset_sc(env, a_budget, period, refills, 1, &clients[0]);
+                error = sel4utils_start_thread(&clients[0], counting_client_fn,
+                        (void *) ep.cptr, (void *) &results->A[i][j], true);
+                ZF_LOGF_IF(error, "Failed to start A");
+            } else {
+                results->A[i][j] = 0;
+            }
+
+            if (b_budget) {
+                reset_sc(env, b_budget, period, refills, 2, &clients[1]);
+                error = sel4utils_start_thread(&clients[1], counting_client_fn,
+                        (void *) ep.cptr, (void *) &results->B[i][j], true);
+                ZF_LOGF_IF(error, "Failed to start B");
+            } else {
+                results->B[i][j] = 0;
+            }
+
+            benchmark_wait_children(done_ep.cptr, "B", !!a_budget + !!b_budget);
+            ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
+            seL4_TCB_Suspend(clients[0].tcb.cptr);
+            seL4_TCB_Suspend(clients[1].tcb.cptr);
+            seL4_TCB_Suspend(server_thread.tcb.cptr);
+            seL4_TCB_Suspend(tfep_thread.tcb.cptr);
+        }
+    }
+
+    ZF_LOGD("Running base line throughput benchmark");
+
+    /* remove the servers tfep */
+    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, seL4_CapNull,
+                              SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
+                              seL4_CapData_Guard_new(0, 0));
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        uint64_t a_budget = get_budget_for_index(i, step);
+        for (int j = 0; j < N_RUNS; j++) {
+            if (a_budget) {
+                benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
+                reset_sc(env, a_budget, period, 0, 1, &clients[0]);
+                error = sel4utils_start_thread(&clients[0], counting_client_fn,
+                        (void *) ep.cptr, (void *) &results->baseline[i][j], true);
+                ZF_LOGF_IF(error, "Failed to start A");
+                benchmark_wait_children(done_ep.cptr, "A", 1);
+                seL4_TCB_Suspend(clients[0].tcb.cptr);
+                seL4_TCB_Suspend(server_thread.tcb.cptr);
+                seL4_TCB_Suspend(tfep_thread.tcb.cptr);
+            } else {
+                results->baseline[i][j] = 0;
+            }
+        }
+    }
+}
+
+
 static size_t object_freq[seL4_ObjectTypeCount] = {0};
 
 int
@@ -637,74 +713,10 @@ main(int argc, char **argv)
     benchmark_teardown(env);
 
     ZF_LOGD("Running shared passive server benchmark");
-
-
-    for (int i = 0; i < N_THROUGHPUT; i++) {
-        /* configure A */
-        uint64_t a_budget = get_budget_for_index(i);
-        uint64_t b_budget = PERIOD - a_budget;
-        seL4_Word refills = 0;//seL4_MaxExtraRefills(seL4_MinSchedContextBits);
-        ZF_LOGD("A: %"PRIu64"/%"PRIu64, a_budget, (uint64_t) PERIOD);
-        ZF_LOGD("B: %"PRIu64"/%"PRIu64, b_budget, (uint64_t) PERIOD);
-
-        for (int j = 0; j  < N_RUNS; j++) {
-            ZF_LOGD("Throughput %d: %d\n", i, j);
-            /* start the server and timeout fault handler */
-            benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
-
-            if (a_budget) {
-                reset_sc(env, a_budget, PERIOD, refills, 1, &clients[0]);
-                error = sel4utils_start_thread(&clients[0], counting_client_fn,
-                        (void *) ep.cptr, (void *) &results->throughput_A[i][j], true);
-                ZF_LOGF_IF(error, "Failed to start A");
-            } else {
-                results->throughput_A[i][j] = 0;
-            }
-
-            if (b_budget) {
-                reset_sc(env, b_budget, PERIOD, refills, 2, &clients[1]);
-                error = sel4utils_start_thread(&clients[1], counting_client_fn,
-                        (void *) ep.cptr, (void *) &results->throughput_B[i][j], true);
-                ZF_LOGF_IF(error, "Failed to start B");
-            } else {
-                results->throughput_B[i][j] = 0;
-            }
-
-            benchmark_wait_children(done_ep.cptr, "B", !!a_budget + !!b_budget);
-            ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->throughput_A[i][j], results->throughput_B[i][j]);
-            seL4_TCB_Suspend(clients[0].tcb.cptr);
-            seL4_TCB_Suspend(clients[1].tcb.cptr);
-            seL4_TCB_Suspend(server_thread.tcb.cptr);
-            seL4_TCB_Suspend(tfep_thread.tcb.cptr);
-        }
-    }
-
-    ZF_LOGD("Running base line throughput benchmark");
-
-    /* remove the servers tfep */
-    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, seL4_CapNull,
-                              SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
-                              seL4_CapData_Guard_new(0, 0));
-    for (int i = 0; i < N_THROUGHPUT; i++) {
-        uint64_t a_budget = get_budget_for_index(i);
-        for (int j = 0; j < N_RUNS; j++) {
-            if (a_budget) {
-                benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
-                reset_sc(env, a_budget, PERIOD, 0, 1, &clients[0]);
-                error = sel4utils_start_thread(&clients[0], counting_client_fn,
-                        (void *) ep.cptr, (void *) &results->throughput_baseline[i][j], true);
-                ZF_LOGF_IF(error, "Failed to start A");
-                benchmark_wait_children(done_ep.cptr, "A", 1);
-                seL4_TCB_Suspend(clients[0].tcb.cptr);
-                seL4_TCB_Suspend(server_thread.tcb.cptr);
-                seL4_TCB_Suspend(tfep_thread.tcb.cptr);
-            } else {
-                results->throughput_baseline[i][j] = 0;
-            }
-        }
-    }
-
-    /* done -> results are stored in shared memory so we can now return */
+    benchmark_throughput(BUDGET, PERIOD, &results->ten_ms, env);
+    benchmark_throughput(BUDGET * 10, PERIOD * 10, &results->hundred_ms, env);
+    benchmark_throughput(BUDGET* 100, PERIOD * 100, &results->thousand_ms, env);
+   /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);
     return 0;
 }

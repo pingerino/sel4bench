@@ -72,7 +72,7 @@ aes_process(void *results)
     result = process_result(N_RUNS, raw_results->kill_cost_cold, desc);
     json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "A throughput";
+    set.name = "A-10";
     desc.name = set.name;
     json_int_t budget[N_THROUGHPUT];
     column_t extra = {
@@ -85,31 +85,96 @@ aes_process(void *results)
     set.n_results = N_THROUGHPUT;
     result_t throughput_results[N_THROUGHPUT];
     set.results = throughput_results;
+    uint64_t step = BUDGET;
+    uint64_t period = PERIOD;
+
     /* process A's results */
     for (int i = 0; i < N_THROUGHPUT; i++) {
-        budget[i] = get_budget_for_index(i);
-        throughput_results[i] = process_result(N_RUNS, raw_results->throughput_A[i], desc);
+        budget[i] = get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->ten_ms.A[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
     /* process B's results */
-    set.name = "B throughput";
+    set.name = "B-10";
     desc.name = set.name;
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
-        budget[i] = PERIOD - get_budget_for_index(i);
-        throughput_results[i] = process_result(N_RUNS, raw_results->throughput_B[i], desc);
+        budget[i] = period - get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->ten_ms.B[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
 
     /* process baseline results */
-    set.name = "baseline throughput";
+    set.name = "baseline-10";
     desc.name = set.name;
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
-        budget[i] = get_budget_for_index(i);
-        throughput_results[i] = process_result(N_RUNS, raw_results->throughput_baseline[i], desc);
+        budget[i] = get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->ten_ms.baseline[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
+
+    step *= 10;
+    period *= 10;
+    /* process A's results */
+    set.name = "A-100";
+    desc.name = set.name;
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->hundred_ms.A[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+    /* process B's results */
+    set.name = "B-100";
+    desc.name = set.name;
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = period - get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->hundred_ms.B[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+
+    /* process baseline results */
+    set.name = "baseline-100";
+    desc.name = set.name;
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->hundred_ms.baseline[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+
+    step *= 10;
+    period *= 10;
+    /* process A's results */
+    set.name = "A-1000";
+    desc.name = set.name;
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->thousand_ms.A[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+    /* process B's results */
+    set.name = "B-1000";
+    desc.name = set.name;
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = period - get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->thousand_ms.B[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+
+    /* process baseline results */
+    set.name = "baseline-1000";
+    desc.name = set.name;
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        budget[i] = get_budget_for_index(i, step);
+        throughput_results[i] = process_result(N_RUNS, raw_results->thousand_ms.baseline[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+
+
 
     return array;
 }
