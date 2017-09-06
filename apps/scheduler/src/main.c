@@ -327,6 +327,11 @@ modeswitch(env_t *env, int crit, ccnt_t *up, ccnt_t *down, bool cold)
 
 sel4utils_thread_t thread_array[NUM_THREADS];
 
+void infinite(void *a, void *b, void *c)
+{
+    while(1);
+}
+
 static void
 benchmark_modeswitch(env_t *env, scheduler_results_t *results, bool cold)
 {
@@ -386,6 +391,53 @@ benchmark_modeswitch(env_t *env, scheduler_results_t *results, bool cold)
                                           results->modeswitch_vary_hi_hot[DOWN][results_index], cold);
         }
         results_index++;
+    }
+
+    /* stop all the threads */
+    for (int i = 0; i < NUM_THREADS; i++) {
+        error = seL4_TCB_Suspend(threads[i].tcb.cptr);
+        assert(error == 0);
+    }
+}
+
+static void
+benchmark_set_prio(env_t *env, scheduler_results_t *results, bool cold)
+{
+    /* now start 1 lo thread, then 2 threads, then 4 threads ... up to NUM_THREADS / 2
+     * and do the modeswitch */
+    int results_index = 0;
+    int prev_n_threads = 0;
+    uint8_t prio = 10;
+    sel4utils_thread_t *threads = thread_array;
+    int error;
+    for (int n_threads = 1; n_threads <= NUM_THREADS; n_threads *= 2) {
+        for (int i = prev_n_threads; i < n_threads; i++) {
+            error = sel4utils_start_thread(&threads[i], NULL, NULL, NULL, true);
+            ZF_LOGF_IF(error != seL4_NoError, "Failed to start thread");
+        }
+        prev_n_threads = n_threads;
+
+        for (int j = 0; j < N_RUNS; j++) {
+            if (cold) {
+                seL4_BenchmarkFlushCaches();
+            }
+
+            ccnt_t start, end;
+            SEL4BENCH_READ_CCNT(start);
+            for (int i = 0; i < n_threads; i++) {
+                int error = seL4_TCB_SetPriority(threads[i].tcb.cptr, prio);
+                ZF_LOGF_IF(error, "Failed to set prio");
+            }
+            SEL4BENCH_READ_CCNT(end);
+
+            if (cold) {
+                results->prio_cold[results_index][j] = end - start;
+            } else {
+                results->prio_hot[results_index][j] = end - start;
+            }
+            results_index++;
+            prio++;
+        }
     }
 
     /* stop all the threads */
@@ -494,20 +546,29 @@ main(int argc, char **argv)
 #if CONFIG_NUM_CRITICALITIES > 1
     /* criticality change benchmarks */
        /* create all the threads */
-    seL4_CapData_t null_data = {0};
+    seL4_CapData_t null_data = {{0}};
      sel4utils_thread_config_t config = thread_config_default(&env->simple, simple_get_cnode(&env->simple),
              null_data, 0, 10);
-     config = thread_config_stack_size(config, 0);
+     config = thread_config_stack_size(config, 1);
      config = thread_config_no_ipc_buffer(config);
 
     for (int i = 0; i < NUM_THREADS; i++) {
         error = sel4utils_configure_thread_config(&env->slab_vka, &env->vspace,
                                                   &env->vspace, config, &thread_array[i]);
-        assert(error == 0);
+        ZF_LOGF_IF(error, "Failed to configure thread %d", i);
+
+        error = sel4utils_start_thread(&thread_array[i], infinite, NULL, NULL, true);
+        ZF_LOGF_IF(error, "failed to start thread");
     }
 
     benchmark_modeswitch(env, results, false);
     benchmark_modeswitch(env, results, true);
+
+    /* now benchmark a user level criticality change */
+    benchmark_set_prio(env, results, false);
+    benchmark_set_prio(env, results, true);
+
+    /* now run a real modeswitch benchmark, with crit change and deadline misses */
 #endif
 
     /* done -> results are stored in shared memory so we can now return */
