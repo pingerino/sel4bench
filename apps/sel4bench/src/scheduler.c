@@ -165,7 +165,7 @@ process_criticality_results(scheduler_results_t *results, ccnt_t overhead, json_
     process_results(NUM_THREAD_SIZES, N_RUNS, results->modeswitch_vary_hi_cold[DOWN], desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
 
-    extra.header = "n threads";
+    extra.header = "threads";
     set.name = "Set priority COLD";
     process_results(NUM_THREAD_SIZES, N_RUNS, results->prio_cold, desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
