@@ -339,6 +339,14 @@ benchmark_modeswitch(env_t *env, scheduler_results_t *results, bool cold)
 
     sel4utils_thread_t *threads = thread_array;
 
+    /* stop all the threads, set criticalities to lo */
+    for (int i = 0; i < NUM_THREADS; i++) {
+        error = seL4_TCB_Suspend(threads[i].tcb.cptr);
+        ZF_LOGF_IF(error != seL4_NoError, "Failed to stop thread %d", i);
+        error = seL4_TCB_SetCriticality(threads[i].tcb.cptr, seL4_MinCrit);
+        ZF_LOGF_IF(error != seL4_NoError, "Failed to set criticality for thread %d", i);
+    }
+
     /* first we'll show that the mode switch time is independant of the number of lo threads */
     /* we already have 1 high crit thread (the current thread) */
 
