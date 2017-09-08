@@ -317,6 +317,10 @@ modeswitch(env_t *env, int crit, ccnt_t *up, ccnt_t *down, bool cold)
         COMPILER_MEMORY_FENCE();
 
         /* switch back down */
+        if (cold) {
+            seL4_BenchmarkFlushCaches();
+        }
+
         SEL4BENCH_READ_CCNT(start);
         error = seL4_SchedControl_SetCriticality(sched_control, seL4_MinCrit);
         SEL4BENCH_READ_CCNT(end);

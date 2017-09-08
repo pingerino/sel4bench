@@ -139,7 +139,6 @@ process_criticality_results(scheduler_results_t *results, ccnt_t overhead, json_
     process_results(NUM_THREAD_SIZES, N_RUNS, results->modeswitch_vary_lo_hot[DOWN], desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
 
-    extra.header = "threads";
     set.name = "Vary hi threads (switch up) HOT";
     process_results(NUM_THREAD_SIZES, N_RUNS, results->modeswitch_vary_hi_hot[UP], desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
@@ -156,7 +155,6 @@ process_criticality_results(scheduler_results_t *results, ccnt_t overhead, json_
     process_results(NUM_THREAD_SIZES, N_RUNS, results->modeswitch_vary_lo_cold[DOWN], desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
 
-    extra.header = "threads";
     set.name = "Vary hi threads (switch up) COLD";
     process_results(NUM_THREAD_SIZES, N_RUNS, results->modeswitch_vary_hi_cold[UP], desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
@@ -165,7 +163,6 @@ process_criticality_results(scheduler_results_t *results, ccnt_t overhead, json_
     process_results(NUM_THREAD_SIZES, N_RUNS, results->modeswitch_vary_hi_cold[DOWN], desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
 
-    extra.header = "threads";
     set.name = "Set priority COLD";
     process_results(NUM_THREAD_SIZES, N_RUNS, results->prio_cold, desc, crit_results);
     json_array_append_new(array, result_set_to_json(set));
