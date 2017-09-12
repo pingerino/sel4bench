@@ -10,7 +10,7 @@
  * @TAG(D61_BSD)
  */
 #include <assert.h>
-#include "crypto.h"
+#include <aes/crypto.h>
 #include <limits.h>
 #include <stddef.h>
 #include <string.h>

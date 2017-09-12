@@ -19,8 +19,8 @@
 #include <vka/capops.h>
 #include <vka/vka.h>
 
-#include "crypto.h"
-#include "rijndael-alg-fst.h"
+#include <aes/crypto.h>
+#include <aes/rijndael-alg-fst.h>
 
 #include <aes.h>
 

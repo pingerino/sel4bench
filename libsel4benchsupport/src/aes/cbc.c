@@ -11,8 +11,8 @@
  */
 
 #include <assert.h>
-#include "crypto.h"
-#include "rijndael-alg-fst.h"
+#include <aes/crypto.h>
+#include <aes/rijndael-alg-fst.h>
 #include <stddef.h>
 #include <stdint.h>
 
