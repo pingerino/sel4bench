@@ -23,6 +23,7 @@
 #include <aes/rijndael-alg-fst.h>
 
 #include <aes.h>
+#include <sel4/benchmark_utilisation_types.h>
 
 typedef struct {
     uint8_t *vector;
@@ -602,8 +603,14 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
                 results->B[i][j] = 0;
             }
 
+
+            uint64_t *ipcbuffer = (uint64_t *) &(seL4_GetIPCBuffer()->msg[0]);
+            seL4_BenchmarkResetLog();
+
             benchmark_wait_children(done_ep.cptr, "B", !!a_budget + !!b_budget);
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
+            seL4_BenchmarkFinalizeLog();
+            results->util[i][j] = ipcbuffer[BENCHMARK_TOTAL_UTILISATION] - ipcbuffer[BENCHMARK_IDLE_UTILISATION];
             seL4_TCB_Suspend(clients[0].tcb.cptr);
             seL4_TCB_Suspend(clients[1].tcb.cptr);
             seL4_TCB_Suspend(server_thread.tcb.cptr);
