@@ -66,15 +66,22 @@ static void process_tput_result(tput_results_t *res, int ms, json_t *array,
     }
     json_array_append_new(array, result_set_to_json(set));
 
-    sprintf(name, "util-%d", ms);
+    sprintf(name, "idle-%d", ms);
     set.n_extra_cols = 0;
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
-        throughput_results[i] = process_result(N_RUNS, res->util[i], desc);
+        throughput_results[i] = process_result(N_RUNS, res->idle[i], desc);
+    }
+    json_array_append_new(array, result_set_to_json(set));
+
+    sprintf(name, "total-%d", ms);
+    set.n_extra_cols = 0;
+
+    for (int i = 0; i < N_THROUGHPUT; i++) {
+        throughput_results[i] = process_result(N_RUNS, res->total[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
 }
-
 
 static json_t *
 aes_process(void *results)

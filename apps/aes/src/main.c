@@ -610,7 +610,12 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
             benchmark_wait_children(done_ep.cptr, "B", !!a_budget + !!b_budget);
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
             seL4_BenchmarkFinalizeLog();
-            results->util[i][j] = ipcbuffer[BENCHMARK_TOTAL_UTILISATION] - ipcbuffer[BENCHMARK_IDLE_UTILISATION];
+            seL4_BenchmarkGetThreadUtilisation(server_thread.tcb.cptr);
+            seL4_Word idle = ipcbuffer[BENCHMARK_IDLE_UTILISATION];
+            seL4_Word total = ipcbuffer[BENCHMARK_TOTAL_UTILISATION];
+            ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
+            results->total[i][j] = total;
+            results->idle[i][j] = idle;
             seL4_TCB_Suspend(clients[0].tcb.cptr);
             seL4_TCB_Suspend(clients[1].tcb.cptr);
             seL4_TCB_Suspend(server_thread.tcb.cptr);

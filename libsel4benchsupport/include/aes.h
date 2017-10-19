@@ -15,7 +15,7 @@
 
 #define N_IGNORED 10
 #define N_RUNS (100 + N_IGNORED)
-#define N_THROUGHPUT 12
+#define N_THROUGHPUT 11
 #define PERIOD (10 * US_IN_MS)
 #define BUDGET 1000
 
@@ -23,7 +23,8 @@ typedef struct {
     ccnt_t A[N_THROUGHPUT][N_RUNS];
     ccnt_t B[N_THROUGHPUT][N_RUNS];
     ccnt_t baseline[N_THROUGHPUT][N_RUNS];
-    ccnt_t util[N_THROUGHPUT][N_RUNS];
+    ccnt_t total[N_THROUGHPUT][N_RUNS];
+    ccnt_t idle[N_THROUGHPUT][N_RUNS];
 } tput_results_t;
 
 typedef struct aes_results {
