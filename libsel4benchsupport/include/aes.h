@@ -23,8 +23,8 @@ typedef struct {
     ccnt_t A[N_THROUGHPUT][N_RUNS];
     ccnt_t B[N_THROUGHPUT][N_RUNS];
     ccnt_t baseline[N_THROUGHPUT][N_RUNS];
-    ccnt_t total[N_THROUGHPUT][N_RUNS];
-    ccnt_t idle[N_THROUGHPUT][N_RUNS];
+    seL4_Word total[N_THROUGHPUT][N_RUNS];
+    seL4_Word idle[N_THROUGHPUT][N_RUNS];
 } tput_results_t;
 
 typedef struct aes_results {
