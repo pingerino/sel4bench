@@ -37,7 +37,7 @@ static void process_tput_result(tput_results_t *res, int ms, json_t *array,
     };
 
     result_desc_t desc = {
-        .stable = true,
+        .stable = false,
         .name = name,
         .ignored = N_IGNORED
     };
