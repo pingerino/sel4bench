@@ -14,69 +14,75 @@
 #include <stdio.h>
 #include <ulscheduler.h>
 
+
+static json_t *task_result(ccnt_t results[N_RUNS*2]) {
+    json_t *result_array = json_array();
+    for (int i = 0; i < N_RUNS * 2 ; i++) {
+        ccnt_t value = results[i];
+        if (value == 0) {
+            break;
+        }
+        json_array_append_new(result_array, json_integer(value));
+    }
+    return result_array;
+}
+
+static json_t *task_set_result(ccnt_t results[NUM_TASKS+1][N_RUNS*2], int n_tasks) {
+    json_t *task_set_array = json_array();
+    for (int i = 0; i < n_tasks; i++) {
+        json_array_append_new(task_set_array, task_result(results[i]));
+    }
+
+    /* now get results from the scheduler idle */
+    json_array_append_new(task_set_array, task_result(results[NUM_TASKS]));
+    return task_set_array;
+}
+
+static json_t *ulsched_result(ccnt_t results[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*2])
+{
+    json_t *result_array = json_array();
+    assert(result_array != NULL);
+
+    for (int n_tasks = CONFIG_MIN_TASKS; n_tasks <= CONFIG_MAX_TASKS; n_tasks++) {
+        json_t *n_tasks_object = json_object();
+        json_t *n_tasks_results = json_array();
+        json_object_set_new(n_tasks_object, "n tasks", json_integer(n_tasks));
+        json_object_set_new(n_tasks_object, "results", n_tasks_results);
+        for (int task_set = 0; task_set < CONFIG_NUM_TASK_SETS; task_set++) {
+            json_array_append_new(n_tasks_results,
+                task_set_result(results[n_tasks-CONFIG_MIN_TASKS][task_set], n_tasks));
+        }
+        json_array_append_new(result_array, n_tasks_object);
+    }
+
+    return result_array;
+}
+
 static json_t *
 ulscheduler_process(void *results) {
     ulscheduler_results_t *raw_results = results;
 
     json_t *array = json_array();
 
-    /* process overhead */
-    result_desc_t desc = {
-        .stable = true,
-        .name = "ulscheduler measurement overhead",
-        .ignored = N_IGNORED,
-    };
+    json_t *coop_results = json_object();
+    json_array_append_new(array, coop_results);
+    assert(coop_results != NULL);
 
-    result_t result = process_result(N_RUNS, raw_results->overhead, desc);
-    result_set_t set = {
-        .name = "Ulscheduler measurement overhead",
-        .n_extra_cols = 0,
-        .results = &result,
-        .n_results = 1,
-    };
-    json_array_append_new(array, result_set_to_json(set));
+    int error = 0;
+    error = json_object_set_new(coop_results, "Benchmark", json_string("EDF-coop"));
+    assert(error == 0);
 
-    /* set up num task column */
-    json_int_t column_values[NUM_TASKS];
-    for (json_int_t i = 0; i < NUM_TASKS; i++) {
-        column_values[i] = i + CONFIG_MIN_TASKS;
-    }
+    error = json_object_set_new(coop_results, "Results", ulsched_result(raw_results->edf_coop));
 
-    /* describe extra column */
-    column_t extra = {
-        .header = "Tasks",
-        .type = JSON_INTEGER,
-        .integer_array = &column_values[0],
-    };
+    json_t *preempt_results = json_object();
+    json_array_append_new(array, preempt_results);
 
-    /* describe result sets for ulscheduler results */
-    result_t per_task_results[NUM_TASKS];
-    set.name = "EDF (clients call when done)";
-    set.extra_cols = &extra;
-    set.n_extra_cols = 1;
-    set.results = per_task_results;
-    set.n_results = NUM_TASKS;
+    error = json_object_set_new(preempt_results, "Benchmark", json_string("EDF-preempt"));
+    assert(error == 0);
 
-    /* results won't be stable */
-    desc.stable = false;
-    /* set min overhead calculated above */
-    desc.overhead = result.min;
+    error = json_object_set_new(preempt_results, "Results", ulsched_result(raw_results->edf_preempt));
+    assert(error == 0);
 
-    process_results(NUM_TASKS, NUM_RESULTS, raw_results->edf_coop, desc, per_task_results);
-    json_array_append_new(array, result_set_to_json(set));
-
-    set.name = "EDF (preempt)";
-    process_results(NUM_TASKS, NUM_RESULTS, raw_results->edf_preempt, desc, per_task_results);
-    json_array_append_new(array, result_set_to_json(set));
-#if 0
-    set.name = "CFS (clients call when done)";
-    process_results(NUM_TASKS, NUM_RESULTS, raw_results->cfs_coop, desc, per_task_results);
-    json_array_append_new(array, result_set_to_json(set));
-
-    set.name = "CFS (preempt)";
-    process_results(NUM_TASKS, NUM_RESULTS, raw_results->cfs_preempt, desc, per_task_results);
-    json_array_append_new(array, result_set_to_json(set));
-#endif
     return array;
 }
 
