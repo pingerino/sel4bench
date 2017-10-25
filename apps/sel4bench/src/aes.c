@@ -141,7 +141,7 @@ aes_process(void *results)
 
     process_tput_result(&raw_results->ten_ms, 10, array, BUDGET, PERIOD);
     process_tput_result(&raw_results->hundred_ms, 100, array, BUDGET*10, PERIOD*10);
-    process_tput_result(&raw_results->ten_ms, 1000, array, BUDGET*100, PERIOD*100);
+    process_tput_result(&raw_results->thousand_ms, 1000, array, BUDGET*100, PERIOD*100);
 
     return array;
 }
