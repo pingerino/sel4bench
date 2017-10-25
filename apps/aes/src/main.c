@@ -611,7 +611,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
             seL4_BenchmarkFinalizeLog();
             seL4_BenchmarkGetThreadUtilisation(server_thread.tcb.cptr);
-            seL4_Word idle = ipcbuffer[BENCHMARK_IDLE_UTILISATION];
+            seL4_Word idle = ipcbuffer[BENCHMARK_IDLE_LOCALCPU_UTILISATION];
             seL4_Word total = ipcbuffer[BENCHMARK_TOTAL_UTILISATION];
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
             results->total[i][j] = total;
