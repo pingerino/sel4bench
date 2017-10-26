@@ -125,8 +125,10 @@ edf_coop_fn(int argc, char **argv)
         last = timestamp();
         seL4_Call(ep, seL4_MessageInfo_new(0, 0, 0, 0));
         now = timestamp();
-        results[i] = last;
-        results[i+1] = now;
+        if (i < N_RUNS*3) {
+            results[i] = last;
+            results[i+1] = now;
+        }
         i += 2;
     }
 }
@@ -166,7 +168,7 @@ edf_preempt_fn(UNUSED int argc, UNUSED char **argv)
         ccnt_t now = timestamp();
         ccnt_t diff = now - last;
 
-        if (diff > CTX_DIFF) {
+        if (diff > CTX_DIFF && i < N_RUNS*3) {
             results[i] = last;
             results[i+1] = now;
             i += 2;
@@ -189,7 +191,7 @@ idle_fn(UNUSED int argc, UNUSED char **argv)
         ccnt_t now = timestamp();
         ccnt_t diff = now - last;
 
-        if (diff > CTX_DIFF) {
+        if (diff > CTX_DIFF && i < N_RUNS*3) {
             results[i] = last;
             results[i+1] = now;
             i += 2;
