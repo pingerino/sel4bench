@@ -35,8 +35,8 @@
 #define NUM_TASKS (CONFIG_MAX_TASKS - CONFIG_MIN_TASKS + 1)
 
 typedef struct ulscheduler_results_t {
-    ccnt_t edf_coop[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*2];
-    ccnt_t edf_preempt[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*2];
+    ccnt_t edf_coop[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*3];
+    ccnt_t edf_preempt[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*3];
 
     //ccnt_t cfs_coop[NUM_TASKS][NUM_RESULTS];
     //ccnt_t cfs_preempt[NUM_TASKS][NUM_RESULTS];

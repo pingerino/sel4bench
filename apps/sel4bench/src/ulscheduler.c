@@ -15,7 +15,7 @@
 #include <ulscheduler.h>
 
 
-static json_t *task_result(ccnt_t results[N_RUNS*2]) {
+static json_t *task_result(ccnt_t results[N_RUNS*3]) {
     json_t *result_array = json_array();
     for (int i = 0; i < N_RUNS * 2 ; i++) {
         ccnt_t value = results[i];
@@ -27,7 +27,7 @@ static json_t *task_result(ccnt_t results[N_RUNS*2]) {
     return result_array;
 }
 
-static json_t *task_set_result(ccnt_t results[NUM_TASKS+1][N_RUNS*2], int n_tasks) {
+static json_t *task_set_result(ccnt_t results[NUM_TASKS+1][N_RUNS*3], int n_tasks) {
     json_t *task_set_array = json_array();
     for (int i = 0; i < n_tasks; i++) {
         json_array_append_new(task_set_array, task_result(results[i]));
@@ -38,7 +38,7 @@ static json_t *task_set_result(ccnt_t results[NUM_TASKS+1][N_RUNS*2], int n_task
     return task_set_array;
 }
 
-static json_t *ulsched_result(ccnt_t results[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*2])
+static json_t *ulsched_result(ccnt_t results[NUM_TASKS][CONFIG_NUM_TASK_SETS][NUM_TASKS+1][N_RUNS*3])
 {
     json_t *result_array = json_array();
     assert(result_array != NULL);

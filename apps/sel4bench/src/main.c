@@ -205,9 +205,13 @@ launch_benchmark(benchmark_t *benchmark, env_t *env)
     void *results = vspace_new_pages(&env->vspace, seL4_AllRights, benchmark->results_pages, seL4_PageBits);
     ZF_LOGF_IF(results == NULL, "Failed to allocate pages for results");
 
+    /* 0 the results */
+    memset(results, 0, benchmark->results_pages * BIT(seL4_PageBits));
+
     /* reserve memory for args */
     assert(sizeof(benchmark_args_t) < PAGE_SIZE_4K);
     void *args = vspace_new_pages(&env->vspace, seL4_AllRights, 1, seL4_PageBits);
+    memset(args, 0, BIT(seL4_PageBits));
     /* Run benchmark process */
     int exit_code = run_benchmark(env, benchmark, results, args);
 

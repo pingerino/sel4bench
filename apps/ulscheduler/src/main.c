@@ -21,10 +21,10 @@
 #include <benchmark.h>
 #include <ulscheduler.h>
 #ifdef CONFIG_ARCH_X86
-#define CTX_DIFF 150
+#define CTX_DIFF 300
 #include <platsupport/arch/tsc.h>
 #else
-#define CTX_DIFF 35
+#define CTX_DIFF 300
 #endif
 
 #define NOPS ""
@@ -57,7 +57,7 @@ typedef struct task {
 
 typedef void (*create_fn_t)(sched_t *, env_t *, task_t *, uint64_t, uint64_t, void *, int, ccnt_t *);
 
-static task_t tasks[NUM_TASKS + CONFIG_MIN_TASKS];
+static task_t tasks[NUM_TASKS + CONFIG_MIN_TASKS + 1]; // +1 for idle thread
 
 bool
 sched_finished(void *cookie)
@@ -94,52 +94,40 @@ timestamp(void)
 #endif
 }
 
-static inline int
-spin(uint64_t budget, ccnt_t *results, int i)
-{
-    uint64_t sum = 0;
-    assert(budget > 0);
-    ccnt_t diff = 0;
-    ccnt_t now, last;
-
-    /* write down the timestamps either side of a context switch */
-    last = timestamp();
-
-    while (sum <= budget) {
-        COMPILER_MEMORY_FENCE();
-        now = timestamp();
-        diff = now - last;
-        if (diff > CTX_DIFF) {
-            results[i] = last;
-            results[i+1] = now;
-            i += 2;
-        } else {
-            sum += diff;
-        }
-        assert(i < N_RUNS*2);
-        last = now;
-    }
-
-    return i;
-}
-
 void
 edf_coop_fn(int argc, char **argv)
 {
     assert(argc == NUM_ARGS);
     UNUSED int id = (int) atol(argv[0]);
     seL4_CPtr ep = (seL4_CPtr) atol(argv[1]);
-    ccnt_t *results = atol(argv[2]);
+    ccnt_t *results = (ccnt_t *) atol(argv[2]);
     uint64_t budget = get_budget(argv, 3);
     int i = 0;
 
     seL4_Call(ep, seL4_MessageInfo_new(0, 0, 0, 0));
+    ccnt_t last, now;
     while (1) {
-        i = spin(budget, results, i);
-        results[i] = timestamp();
+       // ccnt_t sum = 0;
+      //  while (sum <= budget) {
+      //      ccnt_t diff = now - last;
+
+        //    if (diff > CTX_DIFF) {
+          //      results[i] = last;
+           //     results[i+1] = now;
+           //     i += 2;
+          //  } else {
+           //     sum+=diff*2;
+          //  }
+   //         assert(i < N_RUNS*2);
+          //  last = now;
+        //}
+
+        last = timestamp();
         seL4_Call(ep, seL4_MessageInfo_new(0, 0, 0, 0));
-        results[i+1] = timestamp();
-        i+=2;
+        now = timestamp();
+        results[i] = last;
+        results[i+1] = now;
+        i += 2;
     }
 }
 
@@ -166,27 +154,52 @@ edf_preempt_fn(UNUSED int argc, UNUSED char **argv)
 {
     UNUSED int id = (int) atol(argv[0]);
     seL4_CPtr ep = (seL4_CPtr) atol(argv[1]);
-    ccnt_t *results = atol(argv[2]);
+    ccnt_t *results = (ccnt_t *)atol(argv[2]);
     int i = 0;
 
     /* call once to wait for first release */
+    results[0] = 0;
     seL4_Call(ep, seL4_MessageInfo_new(0, 0, 0, 0));
+
     ccnt_t last = timestamp();
-    while (true) {
-        COMPILER_MEMORY_FENCE();
+    while (1) {
         ccnt_t now = timestamp();
         ccnt_t diff = now - last;
+
         if (diff > CTX_DIFF) {
-            if (i < N_RUNS * 2) {
-                results[i] = last;
-                results[i+1] = now;
-            }
+            results[i] = last;
+            results[i+1] = now;
             i += 2;
         }
-        assert(i < N_RUNS*3);
         last = now;
     }
 }
+
+void
+idle_fn(UNUSED int argc, UNUSED char **argv)
+{
+    UNUSED int id = (int) atol(argv[0]);
+    ccnt_t *results = (ccnt_t *) atol(argv[2]);
+    int i = 0;
+
+    results[0] = 0;
+
+    ccnt_t last = timestamp();
+    while (1) {
+        ccnt_t now = timestamp();
+        ccnt_t diff = now - last;
+
+        if (diff > CTX_DIFF) {
+            results[i] = last;
+            results[i+1] = now;
+            i += 2;
+        }
+        last = now;
+    }
+}
+
+
+
 #if 0
 void
 cfs_preempt_fn(UNUSED int argc, UNUSED char **argv)
@@ -319,19 +332,29 @@ run_benchmark(env_t *env, sched_t *sched, int num_tasks, void *client_fn, create
             }
         }
 
+
+        /* start an idle thread */
+        task_t *idle = &tasks[NUM_TASKS];
+        if (coop) {
+            sel4utils_create_word_args(idle->args, idle->argv, NUM_ARGS, NUM_TASKS, 0,
+                results->edf_coop[num_tasks - CONFIG_MIN_TASKS][run][NUM_TASKS], 0, 0);
+        } else {
+            sel4utils_create_word_args(idle->args, idle->argv, NUM_ARGS, NUM_TASKS, 0,
+                results->edf_preempt[num_tasks - CONFIG_MIN_TASKS][run][NUM_TASKS], 0, 0);
+        }
+
         ltimer_reset(timer);
 
         size_t count = 0;
-        if (coop) {
-            sched_run(sched, sched_finished, &count, (void *) results->edf_coop[num_tasks - CONFIG_MIN_TASKS][run][NUM_TASKS]);
-        } else {
-            sched_run(sched, sched_finished, &count, (void *) results->edf_preempt[num_tasks-CONFIG_MIN_TASKS][run][NUM_TASKS]);
-        }
+        int error = sel4utils_start_thread(&idle->thread, idle_fn, (void *) NUM_ARGS, (void *) idle->argv, true);
+        ZF_LOGF_IFERR(error, "Failed to start idle");
 
-        printf("done\n");
+        sched_run(sched, sched_finished, &count, NULL);
+
         for (int t = 0; t < num_tasks; t++) {
             teardown_thread(&env->slab_vka, &env->vspace, &tasks[t]);
         }
+        seL4_TCB_Suspend(idle->thread.tcb.cptr);
 
         sched_reset(sched);
     }
@@ -384,15 +407,9 @@ main(int argc, char **argv)
         benchmark_configure_thread(env, seL4_CapNull, seL4_MaxPrio - 1, "ulscheduled thread", &tasks[i].thread);
     }
 
-    /* edf, threads yield immediately */
-    sched = sched_new_edf(&env->timer, &env->slab_vka, SEL4UTILS_TCB_SLOT, env->ntfn.cptr);
-    for (int i = 0; i < NUM_TASKS; i++) {
-        ZF_LOGD("EDF coop benchmark %d/%d", i + CONFIG_MIN_TASKS, NUM_TASKS);
-        run_benchmark(env, sched, i + CONFIG_MIN_TASKS, edf_coop_fn, create_edf_thread, &env->timer.ltimer,
-                      results, seL4_MaxPrio - 2, true);
-    }
-    sched_destroy_scheduler(sched);
-    /* edf, threads rate limited, do not yield */
+    /* configure idle thread */
+    benchmark_configure_thread(env, seL4_CapNull, seL4_MinPrio, "scheduler idle thread", &tasks[NUM_TASKS].thread);
+ /* edf, threads rate limited, do not yield */
     sched = sched_new_edf(&env->timer, &env->slab_vka, SEL4UTILS_TCB_SLOT, env->ntfn.cptr);
     for (int i = 0; i < NUM_TASKS; i++) {
         ZF_LOGD("EDF preempt benchmark %d/%d", i + CONFIG_MIN_TASKS, NUM_TASKS);
@@ -401,7 +418,17 @@ main(int argc, char **argv)
     }
     sched_destroy_scheduler(sched);
 
-#if 0
+
+    /* edf, threads yield immediately */
+    sched = sched_new_edf(&env->timer, &env->slab_vka, SEL4UTILS_TCB_SLOT, env->ntfn.cptr);
+    for (int i = 0; i < NUM_TASKS; i++) {
+        ZF_LOGD("EDF coop benchmark %d/%d", i + CONFIG_MIN_TASKS, NUM_TASKS);
+        run_benchmark(env, sched, i + CONFIG_MIN_TASKS, edf_coop_fn, create_edf_thread, &env->timer.ltimer,
+                      results, seL4_MaxPrio - 2, true);
+    }
+    sched_destroy_scheduler(sched);
+
+   #if 0
     /* cfs shared sc coop benchmark */
     sched = sched_new_cooperative_cfs(&env->slab_vka, SEL4UTILS_SCHED_CONTEXT_SLOT);
     for (int i = 0; i < NUM_TASKS; i++) {
