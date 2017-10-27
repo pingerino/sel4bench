@@ -16,6 +16,8 @@
 #define N_IGNORED 10
 #define N_RUNS (100 + N_IGNORED)
 #define N_THROUGHPUT 11
+#define N_THROUGHPUT_RUNS 3
+#define N_THROUGHPUT_IGNORED 0
 #define PERIOD (10 * US_IN_MS)
 #define BUDGET 1000
 

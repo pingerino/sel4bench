@@ -39,13 +39,13 @@ static void process_tput_result(tput_results_t *res, int ms, json_t *array,
     result_desc_t desc = {
         .stable = false,
         .name = name,
-        .ignored = N_IGNORED
+        .ignored = 0
     };
 
     /* process A's results */
     for (int i = 0; i < N_THROUGHPUT; i++) {
         budget[i] = get_budget_for_index(i, step);
-        throughput_results[i] = process_result(N_RUNS, res->A[i], desc);
+        throughput_results[i] = process_result(N_THROUGHPUT_RUNS, res->A[i], desc);
     }
 
     json_array_append_new(array, result_set_to_json(set));
@@ -53,7 +53,7 @@ static void process_tput_result(tput_results_t *res, int ms, json_t *array,
     sprintf(name, "B-%d", ms);
     for (int i = 0; i < N_THROUGHPUT; i++) {
         budget[i] = period - get_budget_for_index(i, step);
-        throughput_results[i] = process_result(N_RUNS, res->B[i], desc);
+        throughput_results[i] = process_result(N_THROUGHPUT_RUNS, res->B[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
 
@@ -62,21 +62,21 @@ static void process_tput_result(tput_results_t *res, int ms, json_t *array,
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
         budget[i] = get_budget_for_index(i, step);
-        throughput_results[i] = process_result(N_RUNS, res->baseline[i], desc);
+        throughput_results[i] = process_result(N_THROUGHPUT_RUNS, res->baseline[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
 
     sprintf(name, "idle-%d", ms);
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
-        throughput_results[i] = process_result(N_RUNS, res->idle[i], desc);
+        throughput_results[i] = process_result(N_THROUGHPUT_RUNS, res->idle[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
 
     sprintf(name, "total-%d", ms);
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
-        throughput_results[i] = process_result(N_RUNS, res->total[i], desc);
+        throughput_results[i] = process_result(N_THROUGHPUT_RUNS, res->total[i], desc);
     }
     json_array_append_new(array, result_set_to_json(set));
 }

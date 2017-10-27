@@ -165,7 +165,7 @@ client_fn(void *arg0, void *arg1, void *arg2)
 void
 counting_client_fn(void *arg0, void *arg1, void *arg2)
 {
-    uint64_t *res = arg1;
+    ccnt_t *res = arg1;
     seL4_MessageInfo_t info = seL4_MessageInfo_new(0, 0, 0, 4);
     /* set MR0 to 0 for the first request */
     seL4_Word mr0 = 0;
@@ -175,8 +175,11 @@ counting_client_fn(void *arg0, void *arg1, void *arg2)
 
     ccnt_t start, end;
     SEL4BENCH_READ_CCNT(start);
-    while (mr3 > 0) {
-        info = seL4_CallWithMRs(ep.cptr, info, &mr0, &mr1, &mr2, &mr3);
+    for (int i = 0; i < N_THROUGHPUT_RUNS; i++) {
+        while (mr3 > 0) {
+            info = seL4_CallWithMRs(ep.cptr, info, &mr0, &mr1, &mr2, &mr3);
+        }
+        seL4_Yield();
     }
     SEL4BENCH_READ_CCNT(end);
     *res = end - start;
@@ -580,7 +583,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
         ZF_LOGD("A: %"PRIu64"/%"PRIu64, a_budget, (uint64_t) period);
         ZF_LOGD("B: %"PRIu64"/%"PRIu64, b_budget, (uint64_t) period);
 
-        for (int j = 0; j  < N_RUNS; j++) {
+        for (int j = 0; j  < N_THROUGHPUT_RUNS; j++) {
             ZF_LOGD("Throughput %d: %d\n", i, j);
             /* start the server and timeout fault handler */
             benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
@@ -634,7 +637,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
                               seL4_CapData_Guard_new(0, 0));
     for (int i = 0; i < N_THROUGHPUT; i++) {
         uint64_t a_budget = get_budget_for_index(i, step);
-        for (int j = 0; j < N_RUNS; j++) {
+        for (int j = 0; j < N_THROUGHPUT_RUNS; j++) {
             if (a_budget) {
                 benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
                 reset_sc(env, a_budget, period, 0, 1, &clients[0]);
