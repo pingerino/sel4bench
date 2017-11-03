@@ -256,7 +256,7 @@ run_fault_benchmark(env_t *env, fault_results_t *results)
     /* create faulter */
     ccnt_t start = 0;
 
-    benchmark_configure_thread(env, fault_endpoint.cptr, seL4_MinPrio + 1, "faulter", &faulter);
+    benchmark_configure_thread(env, fault_endpoint.cptr, seL4_MinPrio, "faulter", &faulter);
     sel4utils_create_word_args(faulter_args, faulter_argv, N_FAULTER_ARGS, (seL4_Word) &start,
                                (seL4_Word) results, done_ep.cptr);
 
