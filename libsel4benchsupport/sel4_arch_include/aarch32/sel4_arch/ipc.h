@@ -44,6 +44,17 @@
     ); \
 } while(0)
 
+#define DO_SEND_10(ep, tag, swi) do { \
+    register seL4_Word dest asm("r0") = (seL4_Word)ep; \
+    register seL4_MessageInfo_t info asm("r1") = tag; \
+    register seL4_Word scno asm("r7") = seL4_SysSend; \
+    asm volatile(NOPS swi NOPS \
+        : "+r"(dest), "+r"(info) \
+        : "r"(scno) \
+        : "r2", "r3", "r4", "r5" \
+    ); \
+} while(0)
+
 
 #ifdef CONFIG_KERNEL_RT
 #define DO_REPLY_RECV_10(ep, tag, ro, swi) do { \
@@ -118,6 +129,8 @@
 #define DO_NOP_CALL_10(ep, tag) DO_CALL_10(ep, tag, "nop")
 #define DO_REAL_SEND(ep, tag) DO_SEND(ep, tag, "swi $0")
 #define DO_NOP_SEND(ep, tag) DO_SEND(ep, tag, "nop")
+#define DO_REAL_SEND_10(ep, tag) DO_SEND_10(ep, tag, "swi $0")
+#define DO_NOP_SEND_10(ep, tag) DO_SEND_10(ep, tag, "nop")
 
 #define DO_REAL_REPLY_RECV(ep, tag, ro) DO_REPLY_RECV(ep, tag, ro, "swi $0")
 #define DO_NOP_REPLY_RECV(ep, tag, ro) DO_REPLY_RECV(ep, tag, ro, "nop")

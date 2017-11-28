@@ -36,10 +36,10 @@ abort(void)
     benchmark_finished(EXIT_FAILURE);
 }
 
-void
-__arch_putchar(int c)
+size_t
+__arch_write(char *data, int count)
 {
-    benchmark_putchar(c);
+    return benchmark_write(data, count);
 }
 
 void
@@ -119,12 +119,12 @@ benchmark_timeout(env_t *env, timeout_results_t *results)
 
     ZF_LOGD("Configure server\n");
     /* create server */
-    seL4_CapData_t guard = seL4_CapData_Guard_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS);
+    seL4_Word guard = seL4_CNode_CapData_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS).words[0];
     sel4utils_thread_t server;
     benchmark_configure_thread(env, 0, seL4_MinPrio + 1, "server", &server);
 
     error = seL4_TCB_SetSpace(server.tcb.cptr, 0, tfep.cptr, SEL4UTILS_CNODE_SLOT, guard,
-            SEL4UTILS_PD_SLOT, seL4_CapData_Guard_new(0, 0));
+            SEL4UTILS_PD_SLOT, 0);
     ZF_LOGF_IFERR(error, "failed to set tfep");
 
     seL4_Word argc = 3;
