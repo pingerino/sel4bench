@@ -155,19 +155,6 @@ static const benchmark_params_t benchmark_params[] = {
         .passive = true,
 
     },
-    /* ReplyRecv slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
-    {
-        .name        = "seL4_ReplyRecv",
-        .direction   = DIR_FROM,
-        .client_fn   = IPC_CALL_10_FUNC,
-        .server_fn   = IPC_REPLYRECV_10_FUNC,
-        .same_vspace = false,
-        .client_prio = 100,
-        .server_prio = 100,
-        .length = 10,
-        .overhead_id = REPLY_RECV_10_OVERHEAD,
-        .passive = true,
-    },
     /* Call slowpath, long IPC (10), same prio client to server, different address space */
     {
         .name        = "seL4_Call",
@@ -175,13 +162,13 @@ static const benchmark_params_t benchmark_params[] = {
         .client_fn   = IPC_CALL_10_FUNC2,
         .server_fn   = IPC_REPLYRECV_10_FUNC2,
         .same_vspace = false,
-        .client_prio = 100,
-        .server_prio = 100,
+        .client_prio = seL4_MaxPrio - 1,
+        .server_prio = seL4_MaxPrio - 1,
         .length = 10,
         .overhead_id = CALL_10_OVERHEAD,
         .passive = false,
     },
-    /* ReplyRecv slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
+    /* ReplyRecv passive slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
     {
         .name        = "seL4_ReplyRecv",
         .direction   = DIR_FROM,
@@ -192,7 +179,20 @@ static const benchmark_params_t benchmark_params[] = {
         .server_prio = seL4_MaxPrio - 1,
         .length = 10,
         .overhead_id = REPLY_RECV_10_OVERHEAD,
-        .passive = false
+        .passive = true
+    },
+    /* ReplyRecv active slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
+    {
+        .name        = "seL4_ReplyRecv",
+        .direction   = DIR_FROM,
+        .client_fn   = IPC_CALL_10_FUNC,
+        .server_fn   = IPC_REPLYRECV_10_FUNC,
+        .same_vspace = false,
+        .client_prio = seL4_MaxPrio - 1,
+        .server_prio = seL4_MaxPrio - 1,
+        .length = 10,
+        .overhead_id = REPLY_RECV_10_OVERHEAD,
+        .passive = false,
     }
 };
 
