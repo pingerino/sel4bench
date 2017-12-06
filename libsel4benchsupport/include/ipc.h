@@ -181,6 +181,20 @@ static const benchmark_params_t benchmark_params[] = {
         .overhead_id = REPLY_RECV_10_OVERHEAD,
         .passive = true
     },
+    /* Call active slowpath, long IPC (10), same prio client to server, different address space */
+    {
+        .name        = "seL4_Call",
+        .direction   = DIR_TO,
+        .client_fn   = IPC_CALL_10_FUNC2,
+        .server_fn   = IPC_REPLYRECV_10_FUNC2,
+        .same_vspace = false,
+        .client_prio = seL4_MaxPrio - 1,
+        .server_prio = seL4_MaxPrio - 1,
+        .length = 10,
+        .overhead_id = CALL_10_OVERHEAD,
+        .passive = false,
+    },
+
     /* ReplyRecv active slowpath, long IPC (10), same prio server to client, on the slowpath, different address space */
     {
         .name        = "seL4_ReplyRecv",
