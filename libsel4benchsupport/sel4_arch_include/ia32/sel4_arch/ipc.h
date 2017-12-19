@@ -87,7 +87,7 @@
          "a" (seL4_SysSend) \
         : \
          "ecx", \
-         "edx" \
+         "edx", \
          "edi"\
     ); \
 } while(0)
