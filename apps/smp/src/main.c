@@ -257,7 +257,7 @@ main(int argc, char *argv[])
         /* prepare thread for pp_ipcs on different cores */
         sched_params_t params = {0};
 #ifdef CONFIG_KERNEL_RT
-        params = sched_params_round_robin(params, &env->simple, i, CONFIG_BOOT_THREAD_TIME_SLICE * US_IN_MS);
+        params = sched_params_round_robin(params, &env->simple, i, nr_cores * RUNS * TESTS + 1 * US_IN_S);
 #else
         params.core = i;
 #endif
