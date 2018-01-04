@@ -114,6 +114,9 @@ void benchmark_configure_thread_in_process(env_t *env, sel4utils_process_t *proc
 void benchmark_configure_thread(env_t *env, seL4_CPtr fault_ep, uint8_t prio, char *name,
                                 sel4utils_thread_t *thread);
 
+/* As per benchmark_configure_thread above, but use a specific vka rather than the default env slab vka */
+void benchmark_configure_thread_vka(env_t *env, vka_t *vka, seL4_CPtr fault_ep, uint8_t prio, char *name, sel4utils_thread_t *thread);
+
 /*
  * Wait for n child threads/processes to terminate successfully.
  *

@@ -208,16 +208,28 @@ main(int argc, char *argv[])
     UNUSED int error;
     smp_results_t *results;
     int nr_cores;
+    vka_t slab_vkas[CONFIG_MAX_NUM_NODES];
 
-    static size_t object_freq[seL4_ObjectTypeCount] = {
-        [seL4_TCBObject] = 2 * CONFIG_MAX_NUM_NODES,
-        [seL4_EndpointObject] = CONFIG_MAX_NUM_NODES,
-    };
+    /* we don't use the allocator created for us */
+    static size_t object_freq[seL4_ObjectTypeCount] = {};
+
     env = benchmark_get_env(argc, argv, sizeof(smp_results_t), object_freq);
     benchmark_init_timer(env);
     results = (smp_results_t *) env->results;
     nr_cores = simple_get_core_count(&env->simple);
     overhead = smp_benchmark_check_overhead();
+
+    /* initialise a slab allocator for each core */
+    object_freq[seL4_TCBObject] = 2;
+#ifdef CONFIG_KERNEL_RT
+    object_freq[seL4_SchedContextObject] = 2;
+    object_freq[seL4_ReplyObject] = 2;
+#endif
+    object_freq[seL4_EndpointObject] = 1;
+    for (int i = 0; i < nr_cores; i++) {
+        int error = slab_init(&slab_vkas[i], &env->delegate_vka, object_freq);
+        ZF_LOGF_IF(error, "Failed to initialise slab allocator");
+    }
 
     /* initialize random number generator for each core */
     for (int i = 0; i < nr_cores; i++) {
@@ -235,11 +247,11 @@ main(int argc, char *argv[])
         snprintf(pong, name_sz, "pong-%i", i);
 
         /* create ping and pong thread for each core... */
-        benchmark_configure_thread(env, 0, seL4_MinPrio, ping, &pp_threads[i].ping);
-        benchmark_configure_thread(env, 0, seL4_MinPrio, pong, &pp_threads[i].pong);
+        benchmark_configure_thread_vka(env, &slab_vkas[i], 0, seL4_MinPrio, ping, &pp_threads[i].ping);
+        benchmark_configure_thread_vka(env, &slab_vkas[i], 0, seL4_MinPrio, pong, &pp_threads[i].pong);
 
         /* create endpoint... */
-        error = vka_alloc_endpoint(&env->slab_vka, &pp_threads[i].ep);
+        error = vka_alloc_endpoint(&slab_vkas[i], &pp_threads[i].ep);
         assert(error == seL4_NoError);
 
         sel4utils_create_word_args(pp_threads[i].thread_args_strings,

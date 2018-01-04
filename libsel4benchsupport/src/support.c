@@ -226,6 +226,11 @@ benchmark_configure_thread_in_process(env_t *env, sel4utils_process_t *process,
 void
 benchmark_configure_thread(env_t *env, seL4_CPtr fault_ep, uint8_t prio, char *name, sel4utils_thread_t *thread)
 {
+    benchmark_configure_thread_vka(env, &env->slab_vka, fault_ep, prio, name, thread);
+}
+
+void benchmark_configure_thread_vka(env_t *env, vka_t *vka, seL4_CPtr fault_ep, uint8_t prio, char *name, sel4utils_thread_t *thread)
+{
     sel4utils_thread_config_t config = thread_config_new(&env->simple);
     config = thread_config_fault_endpoint(config, fault_ep);
     config = thread_config_priority(config, prio);
@@ -235,7 +240,7 @@ benchmark_configure_thread(env_t *env, seL4_CPtr fault_ep, uint8_t prio, char *n
             CONFIG_BOOT_THREAD_TIME_SLICE * NS_IN_US);
 #endif
     config = thread_config_create_reply(config);
-    int error = sel4utils_configure_thread_config(&env->slab_vka, &env->vspace, &env->vspace, config, thread);
+    int error = sel4utils_configure_thread_config(vka, &env->vspace, &env->vspace, config, thread);
     ZF_LOGF_IF(error, "Failed to configure %s\n", name);
     NAME_THREAD(thread->tcb.cptr, name);
 }
