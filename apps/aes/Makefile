@@ -15,12 +15,12 @@ TARGETS := $(notdir $(SOURCE_DIR)).bin
 # whoever loads us will
 LDFLAGS += -u __vsyscall_ptr
 
-# Source files required to build the target 
+# Source files required to build the target
 CFILES :=  $(patsubst $(SOURCE_DIR)/%,%,$(wildcard $(SOURCE_DIR)/src/*.c))
 
 # Libraries
 LIBS := sel4 c elf cpio utils sel4utils sel4allocman sel4vspace sel4simple \
 	    platsupport sel4platsupport sel4bench sel4vka sel4benchsupport \
-		sel4muslcsys 
+		sel4muslcsys sel4serialserver
 
 include $(SEL4_COMMON)/common.mk
