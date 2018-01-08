@@ -189,10 +189,12 @@ counting_client_fn(void *arg0, void *arg1, void *arg2)
 }
 
 static inline void
-kill_child(seL4_CPtr ep)
+kill_child(seL4_CPtr ep, seL4_Word data)
 {
-    /* invoke the reply cap  - this will return the client sc along the call chain */
-    seL4_Send(server_thread.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
+    /* kill the client - this will send the sc back */
+    seL4_TCB_Suspend(clients[data].tcb.cptr);
+
+//    seL4_Send(server_thread.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
 
     //give server time to get back on ep (or could extend client budget)
     int error = seL4_SchedContext_Bind(server_thread.sched_context.cptr, server_thread.tcb.cptr);
@@ -238,7 +240,7 @@ tfep_fn_kill(int argc, char **argv)
             ZF_LOGV("Fault from %"PRIuPTR"\n", data);
             assert(data < N_CLIENTS);
             SEL4BENCH_READ_CCNT(start);
-            kill_child(ep.cptr);
+            kill_child(ep.cptr, data);
             SEL4BENCH_READ_CCNT(end);
             results->kill_cost[j * (N_CLIENTS) + i] = end - start;
         }
@@ -254,7 +256,7 @@ tfep_fn_kill(int argc, char **argv)
             assert(data < N_CLIENTS);
             seL4_BenchmarkFlushCaches();
             SEL4BENCH_READ_CCNT(start);
-            kill_child(ep.cptr);
+            kill_child(ep.cptr, data);
             SEL4BENCH_READ_CCNT(end);
             results->kill_cost_cold[j * (N_CLIENTS) + i] = end - start;
         }
