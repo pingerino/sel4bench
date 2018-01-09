@@ -572,10 +572,10 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
 {
 
     /* reset timeout fault ep */
-    seL4_CapData_t guard = seL4_CapData_Guard_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS);
+    seL4_Word guard = seL4_CNode_CapData_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS).words[0];
     int error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, timeout_ep.cptr,
                               SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
-                              seL4_CapData_Guard_new(0, 0));
+                              seL4_CNode_CapData_new(0, 0).words[0]);
 
     for (int i = 0; i < N_THROUGHPUT; i++) {
         /* configure A */
@@ -636,7 +636,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
     /* remove the servers tfep */
     error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, seL4_CapNull,
                               SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
-                              seL4_CapData_Guard_new(0, 0));
+                              seL4_CNode_CapData_new(0, 0).words[0]);
     for (int i = 0; i < N_THROUGHPUT; i++) {
         uint64_t a_budget = get_budget_for_index(i, step);
         for (int j = 0; j < N_THROUGHPUT_RUNS; j++) {
@@ -706,10 +706,10 @@ main(int argc, char **argv)
     }
 
     /* set servers tfep */
-    seL4_CapData_t guard = seL4_CapData_Guard_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS);
+    seL4_Word guard = seL4_CNode_CapData_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS).words[0];
     error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, timeout_ep.cptr,
                               SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
-                              seL4_CapData_Guard_new(0, 0));
+                              seL4_CNode_CapData_new(0, 0).words[0]);
     ZF_LOGD("Starting rollback benchmark\n");
     benchmark_setup(env, tfep_fn_rollback);
     /* wait for timeout fault handler to finish - it will exit once it has enough samples */
