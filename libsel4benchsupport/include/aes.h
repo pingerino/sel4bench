@@ -46,6 +46,7 @@ typedef struct aes_results {
     tput_results_t hundred_ms;
     tput_results_t thousand_ms;
     ccnt_t smp[CONFIG_MAX_NUM_NODES][N_SMP];
+    ccnt_t smpn[CONFIG_MAX_NUM_NODES][N_SMP];
 } aes_results_t;
 
 

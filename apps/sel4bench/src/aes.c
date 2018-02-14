@@ -156,19 +156,24 @@ aes_process(void *results)
         };
 
         result_t smp_results[CONFIG_MAX_NUM_NODES];
-        set.name = "aes smp";
         set.n_extra_cols = ARRAY_SIZE(cols);
         set.extra_cols = cols;
         set.results = smp_results;
         set.n_results = CONFIG_MAX_NUM_NODES;
 
-        desc.name = "smp";
+        set.name = "smp - 1 server";
         desc.stable = false;
         desc.ignored = 1;
 
         for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
             cores[i] = i+1;
             smp_results[i] = process_result(N_SMP, raw_results->smp[i], desc);
+        }
+        json_array_append_new(array, result_set_to_json(set));
+
+        set.name = "smp - N servers";
+        for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
+            smp_results[i] = process_result(N_SMP, raw_results->smpn[i], desc);
         }
         json_array_append_new(array, result_set_to_json(set));
     };
