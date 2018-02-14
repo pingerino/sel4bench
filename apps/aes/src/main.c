@@ -655,17 +655,26 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
 
 
             uint64_t *ipcbuffer = (uint64_t *) &(seL4_GetIPCBuffer()->msg[0]);
+#ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
             seL4_BenchmarkResetLog();
-
+#endif
             benchmark_wait_children(done_ep.cptr, "", !!b_budget);
             /* stop measuring cpu util once one is finished */
+#ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
             seL4_BenchmarkFinalizeLog();
+#endif
             benchmark_wait_children(done_ep.cptr, "", !!a_budget);
 
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
+#ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
             seL4_BenchmarkGetThreadUtilisation(server_thread.tcb.cptr);
             seL4_Word idle = ipcbuffer[BENCHMARK_IDLE_LOCALCPU_UTILISATION];
             seL4_Word total = ipcbuffer[BENCHMARK_TOTAL_UTILISATION];
+#else
+            seL4_Word idle = 0;
+            seL4_Word total = 0;
+#endif
+
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
             results->total[i][j] = total;
             results->idle[i][j] = idle;
