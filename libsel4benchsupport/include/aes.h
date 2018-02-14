@@ -11,6 +11,7 @@
  */
 #pragma once
 
+#include <autoconf.h>
 #include <sel4bench/sel4bench.h>
 
 #define N_IGNORED 10
@@ -20,6 +21,8 @@
 #define N_THROUGHPUT_IGNORED 0
 #define PERIOD (10 * US_IN_MS)
 #define BUDGET 1000
+
+#define N_SMP 11
 
 typedef struct {
     ccnt_t A[N_THROUGHPUT][N_RUNS];
@@ -42,6 +45,7 @@ typedef struct aes_results {
     tput_results_t ten_ms;
     tput_results_t hundred_ms;
     tput_results_t thousand_ms;
+    ccnt_t smp[CONFIG_MAX_NUM_NODES][N_SMP];
 } aes_results_t;
 
 

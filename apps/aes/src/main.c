@@ -147,7 +147,7 @@ void server_fn(void *arg0, void *arg1, void *arg2)
 }
 
 void
-client_fn(void *arg0, void *arg1, void *arg2)
+infinite_client_fn(void *arg0, void *arg1, void *arg2)
 {
     seL4_Word mr0 = 0;
     seL4_Word mr1 = 0;
@@ -163,6 +163,21 @@ client_fn(void *arg0, void *arg1, void *arg2)
 }
 
 void
+oneshot_client_fn(void *arg0, void *arg1, void *arg2)
+{
+    seL4_MessageInfo_t info = seL4_MessageInfo_new(0, 0, 0, 4);
+    seL4_Word mr0 = 0;
+    seL4_Word mr1 = 0;
+    seL4_Word mr2 = 0;
+    seL4_Word mr3 = THROUGHPUT_SIZE;
+	while (mr3 > 0) {
+        seL4_CallWithMRs(ep.cptr, info, &mr0, &mr1, &mr2, &mr3);
+    }
+    seL4_Send(done_ep.cptr, info);
+    seL4_Wait(stop_ep.cptr, NULL);
+}
+
+void
 counting_client_fn(void *arg0, void *arg1, void *arg2)
 {
     ccnt_t *res = arg1;
@@ -175,12 +190,10 @@ counting_client_fn(void *arg0, void *arg1, void *arg2)
 
     ccnt_t start, end;
     SEL4BENCH_READ_CCNT(start);
-    for (int i = 0; i < N_THROUGHPUT_RUNS; i++) {
-        while (mr3 > 0) {
-            info = seL4_CallWithMRs(ep.cptr, info, &mr0, &mr1, &mr2, &mr3);
-        }
-        seL4_Yield();
+    while (mr3 > 0) {
+        info = seL4_CallWithMRs(ep.cptr, info, &mr0, &mr1, &mr2, &mr3);
     }
+    seL4_Yield();
     SEL4BENCH_READ_CCNT(end);
     *res = end - start;
 
@@ -484,13 +497,13 @@ measure_ccnt_overhead(ccnt_t *results)
 }
 
 void reset_sc(env_t *env, uint64_t budget, uint64_t period, uint32_t refills, uint32_t badge,
-              sel4utils_thread_t *thread)
+              sel4utils_thread_t *thread, int core)
 {
     /* unbind the sc before reconfiguring so we start afresh */
     int error = seL4_SchedContext_Unbind(thread->sched_context.cptr);
     ZF_LOGF_IF(error, "Failed to unbind sc");
 
-    error = seL4_SchedControl_Configure(simple_get_sched_ctrl(&env->simple, 0),
+    error = seL4_SchedControl_Configure(simple_get_sched_ctrl(&env->simple, core),
             thread->sched_context.cptr, budget, period, refills, badge);
     ZF_LOGF_IF(error, "Failed to configure sc");
 
@@ -498,25 +511,13 @@ void reset_sc(env_t *env, uint64_t budget, uint64_t period, uint32_t refills, ui
     ZF_LOGF_IF(error, "Failed to rebind sc");
 }
 
-/* start the server and the timeout fault handler */
-void benchmark_start_server_tf(env_t *env, void *timeout_fn) {
+void start_server(env_t *env)
+{
     /* we use the servers sc as a backup for init -> don't let it run out */
-    reset_sc(env, 100000 * US_IN_S, 100000 * US_IN_S, 0, 0, &server_thread);
-    /* don't let the timeout fault handler run out either */
-    reset_sc(env, 100000 * US_IN_S, 100000 * US_IN_S, 0, 0, &tfep_thread);
-
-    int error = sel4utils_start_thread(&tfep_thread, timeout_fn, NULL, NULL, true);
-    ZF_LOGF_IF(error != 0, "Failed to start tfep thread");
-
-    /* let it initialise */
-    error = seL4_TCB_SetPriority(simple_get_tcb(&env->simple), seL4_MinPrio);
-    ZF_LOGF_IF(error, "failed to set own prio");
-
-    error = seL4_TCB_SetPriority(simple_get_tcb(&env->simple), seL4_MaxPrio);
-    ZF_LOGF_IF(error, "failed to set own prio");
+    reset_sc(env, 100000 * US_IN_S, 100000 * US_IN_S, 0, 0, &server_thread, 0);
 
     /* start the server */
-    error = sel4utils_start_thread(&server_thread, server_fn, (void *) ep.cptr,
+    int error = sel4utils_start_thread(&server_thread, server_fn, (void *) ep.cptr,
             (void *) server_thread.reply.cptr, true);
     ZF_LOGF_IF(error != 0, "Failed to start server");
 
@@ -529,6 +530,37 @@ void benchmark_start_server_tf(env_t *env, void *timeout_fn) {
     sel4utils_checkpoint_thread(&server_thread, &cp, false);
 }
 
+void start_tf(env_t *env, void *timeout_fn) {
+    /* don't let the timeout fault handler run out either */
+    reset_sc(env, 100000 * US_IN_S, 100000 * US_IN_S, 0, 0, &tfep_thread, 0);
+
+    int error = sel4utils_start_thread(&tfep_thread, timeout_fn, NULL, NULL, true);
+    ZF_LOGF_IF(error != 0, "Failed to start tfep thread");
+
+    /* let it initialise */
+    error = seL4_TCB_SetPriority(simple_get_tcb(&env->simple), seL4_MinPrio);
+    ZF_LOGF_IF(error, "failed to set own prio");
+
+    error = seL4_TCB_SetPriority(simple_get_tcb(&env->simple), seL4_MaxPrio);
+    ZF_LOGF_IF(error, "failed to set own prio");
+
+}
+
+/* set servers tfep */
+void set_server_tfep(seL4_CPtr ep) {
+    seL4_Word guard = seL4_CNode_CapData_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS).words[0];
+    int error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, ep,
+                              SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
+                              seL4_CNode_CapData_new(0, 0).words[0]);
+    ZF_LOGF_IF(error, "Failed to set server tfep");
+}
+
+/* start the server and the timeout fault handler */
+void benchmark_start_server_tf(env_t *env, void *timeout_fn) {
+    start_tf(env, timeout_fn);
+    start_server(env);
+}
+
 void
 benchmark_setup(env_t *env, void *timeout_fn)
 {
@@ -536,9 +568,9 @@ benchmark_setup(env_t *env, void *timeout_fn)
 
     /* start the clients */
     for (int i = 0; i < N_CLIENTS; i++) {
-        reset_sc(env, 5 * US_IN_MS, 10 * US_IN_MS, 0, i, &clients[i]);
+        reset_sc(env, 5 * US_IN_MS, 10 * US_IN_MS, 0, i, &clients[i], 0);
         /* start the client */
-        int error = sel4utils_start_thread(&clients[i], client_fn, NULL, NULL, true);
+        int error = sel4utils_start_thread(&clients[i], infinite_client_fn, NULL, NULL, true);
         ZF_LOGF_IF(error != seL4_NoError, "failed to start client %d\n", i);
     }
 }
@@ -591,7 +623,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
             benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
 
             if (a_budget) {
-                reset_sc(env, a_budget, period, refills, 1, &clients[0]);
+                reset_sc(env, a_budget, period, refills, 1, &clients[0], 0);
                 error = sel4utils_start_thread(&clients[0], counting_client_fn,
                         (void *) ep.cptr, (void *) &results->A[i][j], true);
                 ZF_LOGF_IF(error, "Failed to start A");
@@ -600,7 +632,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
             }
 
             if (b_budget) {
-                reset_sc(env, b_budget, period, refills, 2, &clients[1]);
+                reset_sc(env, b_budget, period, refills, 2, &clients[1], 0);
                 error = sel4utils_start_thread(&clients[1], counting_client_fn,
                         (void *) ep.cptr, (void *) &results->B[i][j], true);
                 ZF_LOGF_IF(error, "Failed to start B");
@@ -642,7 +674,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
         for (int j = 0; j < N_THROUGHPUT_RUNS; j++) {
             if (a_budget) {
                 benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
-                reset_sc(env, a_budget, period, 0, 1, &clients[0]);
+                reset_sc(env, a_budget, period, 0, 1, &clients[0], 0);
                 error = sel4utils_start_thread(&clients[0], counting_client_fn,
                         (void *) ep.cptr, (void *) &results->baseline[i][j], true);
                 ZF_LOGF_IF(error, "Failed to start A");
@@ -657,6 +689,37 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
     }
 }
 
+
+static void benchmark_throughput_smp(ccnt_t results[CONFIG_MAX_NUM_NODES][N_SMP], env_t *env)
+{
+
+    /* remove the timeout fault handler */
+
+
+    for (int ncores = 0; ncores < CONFIG_MAX_NUM_NODES; ncores++) {
+        ZF_LOGD("Running smp benchmark #%d\n", ncores);
+        for (int i = 0; i < N_SMP; i++) {
+            /* set up the passive server and tfep handler */
+            benchmark_start_server_tf(env, tfep_fn_rollback_infinite);
+            /* now start N clients - 1 per core */
+            for (int c = 0; c <= ncores; c++) {
+                reset_sc(env, BUDGET * 10, BUDGET * 10, 0, c, &clients[c], c);
+                int error = sel4utils_start_thread(&clients[c], oneshot_client_fn, (void *) ep.cptr, NULL, true);
+                ZF_LOGF_IF(error, "Failed to start client");
+            }
+            ccnt_t start, end;
+            SEL4BENCH_READ_CCNT(start);
+            benchmark_wait_children(done_ep.cptr, "A", ncores+1);
+            SEL4BENCH_READ_CCNT(end);
+            results[ncores][i] = end - start;
+            for (int c = 0; c <= ncores; c++) {
+                seL4_TCB_Suspend(clients[c].tcb.cptr);
+            }
+            seL4_TCB_Suspend(server_thread.tcb.cptr);
+            seL4_TCB_Suspend(tfep_thread.tcb.cptr);
+        }
+    }
+}
 
 static size_t object_freq[seL4_ObjectTypeCount] = {0};
 
@@ -705,38 +768,51 @@ main(int argc, char **argv)
         benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "client", &clients[i]);
     }
 
-    /* set servers tfep */
-    seL4_Word guard = seL4_CNode_CapData_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS).words[0];
-    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, timeout_ep.cptr,
-                              SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
-                              seL4_CNode_CapData_new(0, 0).words[0]);
-    ZF_LOGD("Starting rollback benchmark\n");
-    benchmark_setup(env, tfep_fn_rollback);
-    /* wait for timeout fault handler to finish - it will exit once it has enough samples */
-    benchmark_wait_children(done_ep.cptr, "tfep", 1);
-    benchmark_teardown(env);
 
-    /* next benchmark - use emergency sc's instead */
-    ZF_LOGD("Starting emergency budget benchmark\n");
-    benchmark_setup(env, tfep_fn_emergency_budget);
-    benchmark_wait_children(done_ep.cptr, "tfep", 1);
-    benchmark_teardown(env);
+    if (CONFIG_MAX_NUM_NODES == 1) {
+        /* set servers tfep */
+        set_server_tfep(timeout_ep.cptr);
 
-    ZF_LOGD("Running extend benchmark");
-    benchmark_setup(env, tfep_fn_extend);
-    benchmark_wait_children(done_ep.cptr, "tfep-extend", 1);
-    benchmark_teardown(env);
+        ZF_LOGD("Starting rollback benchmark\n");
+        benchmark_setup(env, tfep_fn_rollback);
+        /* wait for timeout fault handler to finish - it will exit once it has enough samples */
+        benchmark_wait_children(done_ep.cptr, "tfep", 1);
+        benchmark_teardown(env);
 
-    ZF_LOGD("Running kill benchmark");
-    benchmark_setup(env, tfep_fn_kill);
-    benchmark_wait_children(done_ep.cptr, "tfep-kill", 1);
-    benchmark_teardown(env);
+        /* next benchmark - use emergency sc's instead */
+        ZF_LOGD("Starting emergency budget benchmark\n");
+        benchmark_setup(env, tfep_fn_emergency_budget);
+        benchmark_wait_children(done_ep.cptr, "tfep", 1);
+        benchmark_teardown(env);
 
-    ZF_LOGD("Running shared passive server benchmark");
-    benchmark_throughput(BUDGET, PERIOD, &results->ten_ms, env);
-    benchmark_throughput(BUDGET * 10, PERIOD * 10, &results->hundred_ms, env);
-    benchmark_throughput(BUDGET* 100, PERIOD * 100, &results->thousand_ms, env);
-   /* done -> results are stored in shared memory so we can now return */
+        ZF_LOGD("Running extend benchmark");
+        benchmark_setup(env, tfep_fn_extend);
+        benchmark_wait_children(done_ep.cptr, "tfep-extend", 1);
+        benchmark_teardown(env);
+
+        ZF_LOGD("Running kill benchmark");
+        benchmark_setup(env, tfep_fn_kill);
+        benchmark_wait_children(done_ep.cptr, "tfep-kill", 1);
+        benchmark_teardown(env);
+
+        ZF_LOGD("Running shared passive server benchmark");
+        benchmark_throughput(BUDGET, PERIOD, &results->ten_ms, env);
+        benchmark_throughput(BUDGET * 10, PERIOD * 10, &results->hundred_ms, env);
+        benchmark_throughput(BUDGET* 100, PERIOD * 100, &results->thousand_ms, env);
+    } else {
+        /* set servers tfep - none for smp benchmarks */
+        set_server_tfep(seL4_CapNull);
+
+        /* we run two SMP benchmarks - first with a single passive server thread
+         * that bounces between cores, with 1 client per core */
+
+
+        benchmark_throughput_smp(results->smp, env);
+
+        /* second SMP benchmark we start N passive server threads - 1 per core */
+    }
+
+    /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);
     return 0;
 }

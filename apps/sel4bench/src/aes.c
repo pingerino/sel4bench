@@ -93,6 +93,7 @@ aes_process(void *results)
     };
 
     result_t result = process_result(N_RUNS, raw_results->overhead, desc);
+    desc.overhead = result.min;
 
     result_set_t set = {
         .name = "aes overhead",
@@ -104,44 +105,73 @@ aes_process(void *results)
     json_t *array = json_array();
     json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes rollback";
-    desc.stable = false;
-    desc.overhead = result.min;
+    if (CONFIG_MAX_NUM_NODES == 1) {
+        set.name = "aes rollback";
+        desc.stable = false;
+        desc.overhead = result.min;
 
-    result = process_result(N_RUNS, raw_results->rollback_cost, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        result = process_result(N_RUNS, raw_results->rollback_cost, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes rollback cold";
-    result = process_result(N_RUNS, raw_results->rollback_cost_cold, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes rollback cold";
+        result = process_result(N_RUNS, raw_results->rollback_cost_cold, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes emergency";
-    result = process_result(N_RUNS, raw_results->emergency_cost, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes emergency";
+        result = process_result(N_RUNS, raw_results->emergency_cost, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes emergency cold";
-    result = process_result(N_RUNS, raw_results->emergency_cost_cold, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes emergency cold";
+        result = process_result(N_RUNS, raw_results->emergency_cost_cold, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes extend";
-    result = process_result(N_RUNS, raw_results->extend_cost, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes extend";
+        result = process_result(N_RUNS, raw_results->extend_cost, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes extend cold";
-    result = process_result(N_RUNS, raw_results->extend_cost_cold, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes extend cold";
+        result = process_result(N_RUNS, raw_results->extend_cost_cold, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes kill";
-    result = process_result(N_RUNS, raw_results->kill_cost, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes kill";
+        result = process_result(N_RUNS, raw_results->kill_cost, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    set.name = "aes kill cold";
-    result = process_result(N_RUNS, raw_results->kill_cost_cold, desc);
-    json_array_append_new(array, result_set_to_json(set));
+        set.name = "aes kill cold";
+        result = process_result(N_RUNS, raw_results->kill_cost_cold, desc);
+        json_array_append_new(array, result_set_to_json(set));
 
-    process_tput_result(&raw_results->ten_ms, 10, array, BUDGET, PERIOD);
-    process_tput_result(&raw_results->hundred_ms, 100, array, BUDGET*10, PERIOD*10);
-    process_tput_result(&raw_results->thousand_ms, 1000, array, BUDGET*100, PERIOD*100);
+        process_tput_result(&raw_results->ten_ms, 10, array, BUDGET, PERIOD);
+        process_tput_result(&raw_results->hundred_ms, 100, array, BUDGET*10, PERIOD*10);
+        process_tput_result(&raw_results->thousand_ms, 1000, array, BUDGET*100, PERIOD*100);
+    } else {
+
+        json_int_t cores[CONFIG_MAX_NUM_NODES];
+        column_t cols[] = {
+            {
+                .header = "cores",
+                .type = JSON_INTEGER,
+                .integer_array = &cores[0]
+            }
+        };
+
+        result_t smp_results[CONFIG_MAX_NUM_NODES];
+        set.name = "aes smp";
+        set.n_extra_cols = ARRAY_SIZE(cols);
+        set.extra_cols = cols;
+        set.results = smp_results;
+        set.n_results = CONFIG_MAX_NUM_NODES;
+
+        desc.name = "smp";
+        desc.stable = false;
+        desc.ignored = 1;
+
+        for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
+            cores[i] = i+1;
+            smp_results[i] = process_result(N_SMP, raw_results->smp[i], desc);
+        }
+        json_array_append_new(array, result_set_to_json(set));
+    };
 
     return array;
 }
