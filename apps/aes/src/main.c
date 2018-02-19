@@ -66,6 +66,8 @@ static vka_object_t init_ep;
 static vka_object_t stop_ep;
 /* Timeout fault EP */
 static vka_object_t timeout_ep;
+/* for smp benchmarks to sync clients across cores */
+static vka_object_t ntfn[CONFIG_MAX_NUM_NODES];
 
 static seL4_CPtr sched_ctrl;
 
@@ -177,6 +179,9 @@ void
 oneshot_client_fn(void *arg0, void *arg1, void *arg2)
 {
     seL4_CPtr ep = (seL4_CPtr) arg0;
+    seL4_CPtr ntfn = (seL4_CPtr) arg1;
+    /* wait for go signal */
+    seL4_Wait(ntfn, NULL);
     seL4_MessageInfo_t info = seL4_MessageInfo_new(0, 0, 0, 4);
     seL4_Word mr0 = 0;
     seL4_Word mr1 = 0;
@@ -717,37 +722,45 @@ static void benchmark_throughput_smp(ccnt_t results[CONFIG_MAX_NUM_NODES][N_SMP]
         sel4utils_thread_t servers[num_servers])
 {
 
-    for (int num_cores = 0; num_cores < CONFIG_MAX_NUM_NODES; num_cores++) {
+    for (int num_cores = 1; num_cores <= CONFIG_MAX_NUM_NODES; num_cores++) {
         ZF_LOGD("Running smp benchmark #%d\n", num_cores);
 
         /* configure the servers */
-        for (int i = 0; i < num_servers && i <= num_cores; i++) {
-            benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, "server", &servers[i]);
+        for (int i = 0; i < num_servers && i < num_cores; i++) {
             set_server_tfep(servers[i].tcb.cptr, seL4_CapNull);
             start_server(env, &servers[i], i);
         }
 
         for (int i = 0; i < N_SMP; i++) {
             /* now start N clients - 1 per core */
-            for (int c = 0; c <= num_cores; c++) {
+            for (int c = 0; c < num_cores; c++) {
                 reset_sc(env, BUDGET * 10, BUDGET * 10, 0, c, &clients[c], c);
                 int server_id = num_servers == 1 ? 0 : c;
                 int error = sel4utils_start_thread(&clients[c], oneshot_client_fn,
-                        (void *) server_states[server_id].ep.cptr, NULL, true);
+                        (void *) server_states[server_id].ep.cptr,
+                        (void *) ntfn[c].cptr, true);
                 ZF_LOGF_IF(error, "Failed to start client");
             }
             ccnt_t start, end;
             SEL4BENCH_READ_CCNT(start);
-            benchmark_wait_children(done_ep.cptr, "A", num_cores+1);
+            for (int c = 0; c < num_cores; c++) {
+                /* signal each client that they can start */
+                seL4_Signal(ntfn[c].cptr);
+            }
+
+            benchmark_wait_children(done_ep.cptr, "A", num_cores);
+
             SEL4BENCH_READ_CCNT(end);
-            results[num_cores][i] = end - start;
-            for (int c = 0; c <= num_cores; c++) {
-                seL4_TCB_Suspend(clients[c].tcb.cptr);
+            results[num_cores-1][i] = end - start;
+            for (int c = 0; c < num_cores; c++) {
+                int error = seL4_TCB_Suspend(clients[c].tcb.cptr);
+                ZF_LOGF_IF(error, "Failed to stop client");
             }
         }
 
-        for (int i = 0; i < num_servers && i <= num_cores; i++) {
-            seL4_TCB_Suspend(servers[i].tcb.cptr);
+        for (int i = 0; i < num_servers && i < num_cores; i++) {
+            int error = seL4_TCB_Suspend(servers[i].tcb.cptr);
+            ZF_LOGF_IF(error, "Failed to stop server");
         }
 
     }
@@ -764,6 +777,10 @@ main(int argc, char **argv)
     object_freq[seL4_EndpointObject] = 3 + CONFIG_MAX_NUM_NODES;
     object_freq[seL4_ReplyObject] = 2 + N_CLIENTS;
     object_freq[seL4_SchedContextObject] = 2 + N_CLIENTS;
+
+    if (CONFIG_MAX_NUM_NODES > 1) {
+        object_freq[seL4_NotificationObject] = CONFIG_MAX_NUM_NODES;
+    }
 
     sel4bench_init();
     env_t *env = benchmark_get_env(argc, argv, sizeof(aes_results_t), object_freq);
@@ -795,15 +812,15 @@ main(int argc, char **argv)
     error = vka_alloc_endpoint(&env->slab_vka, &stop_ep);
     ZF_LOGF_IF(error != seL4_NoError, "Failed to allocate ep");
 
-    /* allocate threads */
-    benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, "server", &server_thread);
-    benchmark_configure_thread(env, 0, seL4_MaxPrio - 1, "tfep", &tfep_thread);
-    for (int i = 0; i < N_CLIENTS; i++) {
-        benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "client", &clients[i]);
-    }
+      if (CONFIG_MAX_NUM_NODES == 1) {
+        /* allocate threads */
+        benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, "server", &server_thread);
+        benchmark_configure_thread(env, 0, seL4_MaxPrio - 1, "tfep", &tfep_thread);
+        for (int i = 0; i < N_CLIENTS; i++) {
+            benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "client", &clients[i]);
+        }
 
-    if (CONFIG_MAX_NUM_NODES == 1) {
-        /* set servers tfep */
+          /* set servers tfep */
         set_server_tfep(server_thread.tcb.cptr, timeout_ep.cptr);
 
         ZF_LOGD("Starting rollback benchmark\n");
@@ -833,14 +850,27 @@ main(int argc, char **argv)
         benchmark_throughput(BUDGET * 10, PERIOD * 10, &results->hundred_ms, env);
         benchmark_throughput(BUDGET* 100, PERIOD * 100, &results->thousand_ms, env);
     } else {
+        for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
+            error = vka_alloc_notification(&env->slab_vka, &ntfn[i]);
+            ZF_LOGF_IF(error, "failed to alloc ntfn");
+            seL4_Poll(ntfn[i].cptr, NULL);
+        }
 
      /* check we have enough tcbs to use - we use the first CONFIG_MAX_NUM_NODES clients as clients and
      * the next CONFIG_MAX_NUM_NODES clients as servers */
         assert(N_CLIENTS > CONFIG_MAX_NUM_NODES * 2);
+       /* allocate threads */
+        for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
+            char name[10];
+            sprintf(name, "client%d", i);
+            benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, name, &clients[i]);
+            sprintf(name, "server%d", i);
+            benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, name, &clients[i + CONFIG_MAX_NUM_NODES]);
+        }
 
         /* we run two SMP benchmarks - first with a single passive server thread
          * that bounces between cores, with 1 client per core */
-        benchmark_throughput_smp(results->smp, env, 1, &server_thread);
+        benchmark_throughput_smp(results->smp, env, 1, &clients[CONFIG_MAX_NUM_NODES]);
 
         /* second SMP benchmark we start N passive server threads - 1 per core */
         benchmark_throughput_smp(results->smpn, env, CONFIG_MAX_NUM_NODES, &clients[CONFIG_MAX_NUM_NODES]);
