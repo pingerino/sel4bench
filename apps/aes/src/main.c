@@ -56,8 +56,6 @@ static sel4utils_thread_t tfep_thread;
 static sel4utils_thread_t server_thread;
 static sel4utils_thread_t clients[N_CLIENTS];
 
-/* EP for client <-> server communication */
-static vka_object_t ep;
 /* EP clients use to signal they are finished */
 static vka_object_t done_ep;
 /* EP server uses to initialise */
@@ -271,7 +269,7 @@ tfep_fn_kill(int argc, char **argv)
             ZF_LOGV("Fault from %"PRIuPTR"\n", data);
             assert(data < N_CLIENTS);
             SEL4BENCH_READ_CCNT(start);
-            kill_child(ep.cptr, data);
+            kill_child(server_states[0].ep.cptr, data);
             SEL4BENCH_READ_CCNT(end);
             results->kill_cost[j * (N_CLIENTS) + i] = end - start;
         }
@@ -287,7 +285,7 @@ tfep_fn_kill(int argc, char **argv)
             assert(data < N_CLIENTS);
             seL4_BenchmarkFlushCaches();
             SEL4BENCH_READ_CCNT(start);
-            kill_child(ep.cptr, data);
+            kill_child(server_states[0].ep.cptr, data);
             SEL4BENCH_READ_CCNT(end);
             results->kill_cost_cold[j * (N_CLIENTS) + i] = end - start;
         }
@@ -372,7 +370,7 @@ tfep_fn_emergency_budget(int argc, char **argv)
         seL4_SetMR(3, 0);
         SEL4BENCH_READ_CCNT(end);
         results->emergency_cost[i] = end - start;
-        seL4_Call(ep.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
+        seL4_Call(server_states[0].ep.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
         /* server is done! remove emergency budget */
         seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
      }
@@ -388,7 +386,7 @@ tfep_fn_emergency_budget(int argc, char **argv)
         seL4_SetMR(3, 0);
         SEL4BENCH_READ_CCNT(end);
         results->emergency_cost_cold[i] = end - start;
-        seL4_Call(ep.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
+        seL4_Call(server_states[0].ep.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
         /* server is done! remove emergency budget */
         seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
     }
