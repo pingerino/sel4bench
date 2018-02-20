@@ -33,7 +33,12 @@ typedef struct {
 } state_t;
 
 #define N_TIMEOUT_ARGS 3
+
+#if CONFIG_MAX_NUM_NODES > 1
+#define N_CLIENTS CONFIG_MAX_NUM_NODES
+#else
 #define N_CLIENTS 10
+#endif
 
 static aes_results_t *results = NULL;
 
@@ -42,9 +47,11 @@ static aes_results_t *results = NULL;
 /* server state */
 typedef struct server_state {
     volatile state_t *st;
+    state_t s2;
+    state_t s;
+    uint8_t dummy_iv[AES_BLOCK_SIZE];
     uint8_t dummy_pt[THROUGHPUT_SIZE];
     uint8_t dummy_ct[THROUGHPUT_SIZE];
-    uint8_t dummy_iv[THROUGHPUT_SIZE];
     uint32_t rk[4 * (AES256_KEY_ROUNDS + 1)];
     vka_object_t ep;
 } server_state_t;
@@ -53,7 +60,7 @@ static server_state_t server_states[CONFIG_MAX_NUM_NODES];
 
 static sel4utils_checkpoint_t cp;
 static sel4utils_thread_t tfep_thread;
-static sel4utils_thread_t server_thread;
+static sel4utils_thread_t servers[CONFIG_MAX_NUM_NODES];
 static sel4utils_thread_t clients[N_CLIENTS];
 
 /* EP clients use to signal they are finished */
@@ -85,15 +92,15 @@ void server_fn(void *arg0, void *arg1, void *arg2)
 {
     seL4_CPtr reply = (seL4_CPtr) arg1;
     seL4_Word id = (seL4_Word) arg0;
-    state_t s2, s;
     server_state_t *state = &server_states[id];
     state->st = NULL;
-    memset(state->dummy_iv, 0, THROUGHPUT_SIZE);
+
+    memset(state->dummy_iv, 0, AES_BLOCK_SIZE);
 
     /* init */
-    uint8_t key[AES256_KEY_BITS / 8];
-    for (unsigned i = 0; i < sizeof key; i++)
-             key[i] = i;
+    for (unsigned i = 0; i < sizeof state->dummy_iv; i++) {
+        state->dummy_iv[i] = i;
+    }
 
 
 
@@ -104,47 +111,52 @@ void server_fn(void *arg0, void *arg1, void *arg2)
         assert(state->st == NULL);
 
         // XXX: Unpack state into `s`
-        s.vector = (uint8_t *) seL4_GetMR(0);
-        if (s.vector == NULL) {
+        state->s.vector = (uint8_t *) seL4_GetMR(0);
+        if (state->s.vector == NULL) {
             /* new request */
-            s.pt = state->dummy_pt;
-            s.ct = state->dummy_ct;
-            s.len = seL4_GetMR(3);
-            s.vector = state->dummy_iv;
+            state->s.pt = state->dummy_pt;
+            state->s.ct = state->dummy_ct;
+            state->s.len = seL4_GetMR(3);
+            state->s.vector = state->dummy_iv;
         } else {
             /* continued request */
-            s.pt = (uint8_t *) seL4_GetMR(1);
-            s.ct = (uint8_t *) seL4_GetMR(2);
-            s.len = (size_t) seL4_GetMR(3);
+            state->s.pt = (uint8_t *) seL4_GetMR(1);
+            state->s.ct = (uint8_t *) seL4_GetMR(2);
+            state->s.len = (size_t) seL4_GetMR(3);
         }
 
-        state->st = &s;
+        state->st = &state->s;
+        COMPILER_MEMORY_FENCE();
 
+        assert(state->st->len % AES_BLOCK_SIZE == 0);
         while (state->st->len > 0) {
             assert(state->st->len <= THROUGHPUT_SIZE);
             uint8_t pt_block[AES_BLOCK_SIZE];
+
+            assert(state->st->ct < &state->dummy_ct[THROUGHPUT_SIZE]);
+            assert(state->st->vector < &state->dummy_ct[THROUGHPUT_SIZE]);
             for (unsigned i = 0; i < AES_BLOCK_SIZE; i++) {
                 pt_block[i] = state->st->pt[i] ^ state->st->vector[i];
             }
 
             rijndaelEncrypt(state->rk, AES256_KEY_ROUNDS, pt_block, state->st->ct);
 
-            if (state->st == &s) {
-            /* swap to s2 */
-                s2.vector = state->st->ct;
-                s2.pt = state->st->pt + AES_BLOCK_SIZE;
-                s2.ct = state->st->ct + AES_BLOCK_SIZE;
-                s2.len = state->st->len - AES_BLOCK_SIZE;
+            if (state->st == &state->s) {
+                /* swap to s2 */
+                state->s2.vector = state->st->ct;
+                state->s2.pt = state->st->pt + AES_BLOCK_SIZE;
+                state->s2.ct = state->st->ct + AES_BLOCK_SIZE;
+                state->s2.len = state->st->len - AES_BLOCK_SIZE;
                 COMPILER_MEMORY_FENCE();
-                state->st = &s2;
+                state->st = &state->s2;
             } else {
                 /* swap to s */
-                s.vector = state->st->ct;
-                s.pt = state->st->pt + AES_BLOCK_SIZE;
-                s.ct = state->st->ct + AES_BLOCK_SIZE;
-                s.len = state->st->len - AES_BLOCK_SIZE;
+                state->s.vector = state->st->ct;
+                state->s.pt = state->st->pt + AES_BLOCK_SIZE;
+                state->s.ct = state->st->ct + AES_BLOCK_SIZE;
+                state->s.len = state->st->len - AES_BLOCK_SIZE;
                 COMPILER_MEMORY_FENCE();
-                state->st = &s;
+                state->st = &state->s;
             }
         }
         ZF_LOGV("Done ");
@@ -223,10 +235,10 @@ kill_child(seL4_CPtr ep, seL4_Word data)
     /* kill the client - this will send the sc back */
     seL4_TCB_Suspend(clients[data].tcb.cptr);
 
-//    seL4_Send(server_thread.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
+//    seL4_Send(servers.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 0));
 
     //give server time to get back on ep (or could extend client budget)
-    int error = seL4_SchedContext_Bind(server_thread.sched_context.cptr, server_thread.tcb.cptr);
+    int error = seL4_SchedContext_Bind(servers[0].sched_context.cptr, servers[0].tcb.cptr);
     ZF_LOGF_IF(error != 0, "Failed to bind sc to server");
 
     ZF_LOGV("Killed client\n");
@@ -239,7 +251,7 @@ kill_child(seL4_CPtr ep, seL4_Word data)
     seL4_Wait(init_ep.cptr, NULL);
 
     /* convert server back to passive */
-    error = seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
+    error = seL4_SchedContext_Unbind(servers[0].sched_context.cptr);
     ZF_LOGF_IF(error != 0, "Failed to unbind sc from server");
 }
 
@@ -313,11 +325,11 @@ handle_timeout_emergency_budget(seL4_Word data, seL4_CPtr reply)
      */
 
     /* take away clients sc from the server */
-    int error = seL4_SchedContext_UnbindObject(clients[data].sched_context.cptr, server_thread.tcb.cptr);
+    int error = seL4_SchedContext_UnbindObject(clients[data].sched_context.cptr, servers[0].tcb.cptr);
     ZF_LOGF_IF(error != seL4_NoError, "failed to unbind client sc from server");
 
     /* bind server with emergency budget */
-    error = seL4_SchedContext_Bind(server_thread.sched_context.cptr, server_thread.tcb.cptr);
+    error = seL4_SchedContext_Bind(servers[0].sched_context.cptr, servers[0].tcb.cptr);
     ZF_LOGF_IF(error != seL4_NoError, "Failed to bind server emergency budget");
 
     /* reply to the timeout fault */
@@ -339,19 +351,19 @@ handle_timeout_rollback(seL4_CPtr ep, seL4_Word badge)
         seL4_SetMR(3, THROUGHPUT_SIZE);
     }
     /* reply to client */
-    seL4_Send(server_thread.reply.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
+    seL4_Send(servers[0].reply.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
 
     server_states[0].st = NULL;
     sel4utils_checkpoint_restore(&cp, false, true);
     //give server time to get back on ep (or could extend client budget)
-    UNUSED int error = seL4_SchedContext_Bind(server_thread.sched_context.cptr, server_thread.tcb.cptr);
+    UNUSED int error = seL4_SchedContext_Bind(servers[0].sched_context.cptr, servers[0].tcb.cptr);
     assert(error == 0);
 
      // wait for server to init and take context back
     seL4_Wait(init_ep.cptr, NULL);
 
     /* convert server back to passive */
-    error = seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
+    error = seL4_SchedContext_Unbind(servers[0].sched_context.cptr);
     assert(error == 0);
 }
 
@@ -372,7 +384,7 @@ tfep_fn_emergency_budget(int argc, char **argv)
         results->emergency_cost[i] = end - start;
         seL4_Call(server_states[0].ep.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
         /* server is done! remove emergency budget */
-        seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
+        seL4_SchedContext_Unbind(servers[0].sched_context.cptr);
      }
 
     /* cold cache */
@@ -388,7 +400,7 @@ tfep_fn_emergency_budget(int argc, char **argv)
         results->emergency_cost_cold[i] = end - start;
         seL4_Call(server_states[0].ep.cptr, seL4_MessageInfo_new(0, 0, 0, 4));
         /* server is done! remove emergency budget */
-        seL4_SchedContext_Unbind(server_thread.sched_context.cptr);
+        seL4_SchedContext_Unbind(servers[0].sched_context.cptr);
     }
 
     /* finished */
@@ -573,8 +585,8 @@ void set_server_tfep(seL4_CPtr tcb, seL4_CPtr ep) {
 
 /* start the server and the timeout fault handler */
 void benchmark_start_server_tf(env_t *env, void *timeout_fn) {
+    start_server(env, &servers[0], 0);
     start_tf(env, timeout_fn);
-    start_server(env, &server_thread, 0);
 }
 
 void
@@ -602,13 +614,13 @@ benchmark_teardown(env_t *env)
     }
 
     /* kill the server */
-    error = seL4_TCB_Suspend(server_thread.tcb.cptr);
+    error = seL4_TCB_Suspend(servers[0].tcb.cptr);
     assert(error == seL4_NoError);
     sel4utils_free_checkpoint(&cp);
 
     /* rebind servers sc */
-    error = seL4_SchedContext_Bind(server_thread.sched_context.cptr,
-                                   server_thread.tcb.cptr);
+    error = seL4_SchedContext_Bind(servers[0].sched_context.cptr,
+                                   servers[0].tcb.cptr);
     assert(error == seL4_NoError);
 
     /* kill the tfep */
@@ -621,7 +633,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
 
     /* reset timeout fault ep */
     seL4_Word guard = seL4_CNode_CapData_new(0, seL4_WordBits - CONFIG_SEL4UTILS_CSPACE_SIZE_BITS).words[0];
-    int error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, timeout_ep.cptr,
+    int error = seL4_TCB_SetSpace(servers[0].tcb.cptr, seL4_CapNull, timeout_ep.cptr,
                               SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
                               seL4_CNode_CapData_new(0, 0).words[0]);
 
@@ -670,7 +682,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
 
             ZF_LOGV("Got "CCNT_FORMAT" "CCNT_FORMAT"\n", results->A[i][j], results->B[i][j]);
 #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
-            seL4_BenchmarkGetThreadUtilisation(server_thread.tcb.cptr);
+            seL4_BenchmarkGetThreadUtilisation(servers[0].tcb.cptr);
             seL4_Word idle = ipcbuffer[BENCHMARK_IDLE_LOCALCPU_UTILISATION];
             seL4_Word total = ipcbuffer[BENCHMARK_TOTAL_UTILISATION];
 #else
@@ -683,7 +695,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
             results->idle[i][j] = idle;
             seL4_TCB_Suspend(clients[0].tcb.cptr);
             seL4_TCB_Suspend(clients[1].tcb.cptr);
-            seL4_TCB_Suspend(server_thread.tcb.cptr);
+            seL4_TCB_Suspend(servers[0].tcb.cptr);
             seL4_TCB_Suspend(tfep_thread.tcb.cptr);
         }
     }
@@ -691,7 +703,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
     ZF_LOGD("Running base line throughput benchmark");
 
     /* remove the servers tfep */
-    error = seL4_TCB_SetSpace(server_thread.tcb.cptr, seL4_CapNull, seL4_CapNull,
+    error = seL4_TCB_SetSpace(servers[0].tcb.cptr, seL4_CapNull, seL4_CapNull,
                               SEL4UTILS_CNODE_SLOT, guard, SEL4UTILS_PD_SLOT,
                               seL4_CNode_CapData_new(0, 0).words[0]);
     for (int i = 0; i < N_THROUGHPUT; i++) {
@@ -705,7 +717,7 @@ static void benchmark_throughput(uint64_t step, uint64_t period, tput_results_t 
                 ZF_LOGF_IF(error, "Failed to start A");
                 benchmark_wait_children(done_ep.cptr, "A", 1);
                 seL4_TCB_Suspend(clients[0].tcb.cptr);
-                seL4_TCB_Suspend(server_thread.tcb.cptr);
+                seL4_TCB_Suspend(servers[0].tcb.cptr);
                 seL4_TCB_Suspend(tfep_thread.tcb.cptr);
             } else {
                 results->baseline[i][j] = 0;
@@ -771,14 +783,11 @@ main(int argc, char **argv)
 {
     UNUSED int error;
 
-    object_freq[seL4_TCBObject] = 2 + N_CLIENTS;
+    object_freq[seL4_TCBObject] = 1 + N_CLIENTS + CONFIG_MAX_NUM_NODES;
     object_freq[seL4_EndpointObject] = 3 + CONFIG_MAX_NUM_NODES;
-    object_freq[seL4_ReplyObject] = 2 + N_CLIENTS;
-    object_freq[seL4_SchedContextObject] = 2 + N_CLIENTS;
-
-    if (CONFIG_MAX_NUM_NODES > 1) {
-        object_freq[seL4_NotificationObject] = CONFIG_MAX_NUM_NODES;
-    }
+    object_freq[seL4_ReplyObject] = object_freq[seL4_TCBObject];
+    object_freq[seL4_SchedContextObject] = object_freq[seL4_TCBObject];
+    object_freq[seL4_NotificationObject] = CONFIG_MAX_NUM_NODES == 1 ? 0 : CONFIG_MAX_NUM_NODES;
 
     sel4bench_init();
     env_t *env = benchmark_get_env(argc, argv, sizeof(aes_results_t), object_freq);
@@ -810,16 +819,23 @@ main(int argc, char **argv)
     error = vka_alloc_endpoint(&env->slab_vka, &stop_ep);
     ZF_LOGF_IF(error != seL4_NoError, "Failed to allocate ep");
 
-      if (CONFIG_MAX_NUM_NODES == 1) {
-        /* allocate threads */
-        benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, "server", &server_thread);
-        benchmark_configure_thread(env, 0, seL4_MaxPrio - 1, "tfep", &tfep_thread);
-        for (int i = 0; i < N_CLIENTS; i++) {
-            benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, "client", &clients[i]);
-        }
+    /* allocate threads */
+    char name[10];
+    for (int i = 0; i < N_CLIENTS; i++) {
+        sprintf(name, "client%d", i);
+        benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, name, &clients[i]);
+    }
 
-          /* set servers tfep */
-        set_server_tfep(server_thread.tcb.cptr, timeout_ep.cptr);
+    for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
+        sprintf(name, "server%d", i);
+        benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, name, &servers[i]);
+    }
+
+    if (CONFIG_MAX_NUM_NODES == 1) {
+        benchmark_configure_thread(env, 0, seL4_MaxPrio - 1, "tfep", &tfep_thread);
+
+        /* set servers tfep */
+        set_server_tfep(servers[0].tcb.cptr, timeout_ep.cptr);
 
         ZF_LOGD("Starting rollback benchmark\n");
         benchmark_setup(env, tfep_fn_rollback);
@@ -854,28 +870,15 @@ main(int argc, char **argv)
             seL4_Poll(ntfn[i].cptr, NULL);
         }
 
-     /* check we have enough tcbs to use - we use the first CONFIG_MAX_NUM_NODES clients as clients and
-     * the next CONFIG_MAX_NUM_NODES clients as servers */
-        assert(N_CLIENTS > CONFIG_MAX_NUM_NODES * 2);
-       /* allocate threads */
-        for (int i = 0; i < CONFIG_MAX_NUM_NODES; i++) {
-            char name[10];
-            sprintf(name, "client%d", i);
-            benchmark_configure_thread(env, 0, seL4_MaxPrio - 3, name, &clients[i]);
-            sprintf(name, "server%d", i);
-            benchmark_configure_thread(env, 0, seL4_MaxPrio - 2, name, &clients[i + CONFIG_MAX_NUM_NODES]);
-        }
-
         /* we run two SMP benchmarks - first with a single passive server thread
          * that bounces between cores, with 1 client per core */
-        benchmark_throughput_smp(results->smp, env, 1, &clients[CONFIG_MAX_NUM_NODES]);
+        benchmark_throughput_smp(results->smp, env, 1, servers);
 
         /* second SMP benchmark we start N passive server threads - 1 per core */
-        benchmark_throughput_smp(results->smpn, env, CONFIG_MAX_NUM_NODES, &clients[CONFIG_MAX_NUM_NODES]);
+        benchmark_throughput_smp(results->smpn, env, CONFIG_MAX_NUM_NODES, servers);
     }
 
     /* done -> results are stored in shared memory so we can now return */
     benchmark_finished(EXIT_SUCCESS);
     return 0;
 }
-
