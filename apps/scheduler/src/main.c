@@ -83,6 +83,46 @@ low_fn(int argc, char **argv)
     seL4_Wait(produce, NULL);
 }
 
+
+void
+high_avg_fn(int argc, char **argv) {
+
+    assert(argc == N_HIGH_ARGS);
+    seL4_CPtr produce = (seL4_CPtr) atol(argv[0]);
+    seL4_CPtr done_ep = (seL4_CPtr) atol(argv[1]);
+    seL4_CPtr consume = (seL4_CPtr) atol(argv[3]);
+
+    for (int i = 0; i < 10000; i++) {
+        DO_REAL_SIGNAL(produce);
+        DO_REAL_WAIT(consume);
+    }
+
+    /* signal completion */
+    seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
+    /* block */
+    seL4_Wait(produce, NULL);
+}
+
+void
+low_avg_fn(int argc, char **argv)
+{
+    assert(argc == N_LOW_ARGS);
+    seL4_CPtr produce = (seL4_CPtr) atol(argv[0]);
+    seL4_CPtr done_ep = (seL4_CPtr) atol(argv[3]);
+    seL4_CPtr consume = (seL4_CPtr) atol(argv[4]);
+
+    for (int i = 0; i < 10000; i++) {
+        DO_REAL_WAIT(produce);
+        DO_REAL_SIGNAL(consume);
+    }
+
+    /* signal completion */
+    seL4_Send(done_ep, seL4_MessageInfo_new(0, 0, 0, 0));
+    /* block */
+    seL4_Wait(produce, NULL);
+}
+
+
 static void
 yield_fn(int argc, char **argv) {
 
@@ -203,6 +243,69 @@ benchmark_prio_threads(env_t *env, seL4_CPtr ep, seL4_CPtr produce, seL4_CPtr co
     seL4_TCB_Suspend(high.tcb.cptr);
     seL4_TCB_Suspend(low.tcb.cptr);
 }
+
+static void
+benchmark_prio_processes_avg(env_t *env, seL4_CPtr ep, seL4_CPtr produce, seL4_CPtr consume,
+                         ccnt_t results[N_RUNS])
+{
+    sel4utils_process_t high;
+    sel4utils_thread_t low;
+    char high_args_strings[N_HIGH_ARGS][WORD_STRING_SIZE];
+    char *high_argv[N_HIGH_ARGS];
+    char low_args_strings[N_LOW_ARGS][WORD_STRING_SIZE];
+    char *low_argv[N_LOW_ARGS];
+    seL4_CPtr remote_ep, remote_produce, remote_consume;
+    UNUSED int error;
+    cspacepath_t path;
+
+    benchmark_shallow_clone_process(env, &high, seL4_MinPrio, high_avg_fn, "high");
+    /* run low in the same thread as us so we don't have to copy the results across */
+    benchmark_configure_thread(env, ep, seL4_MinPrio, "low", &low);
+
+    /* copy ep cap */
+    vka_cspace_make_path(&env->slab_vka, ep, &path);
+    remote_ep = sel4utils_copy_path_to_process(&high, path);
+    assert(remote_ep != seL4_CapNull);
+
+    /* copy ntfn cap */
+    vka_cspace_make_path(&env->slab_vka, produce, &path);
+    remote_produce = sel4utils_copy_path_to_process(&high, path);
+    assert(remote_produce != seL4_CapNull);
+
+    /* copy ntfn cap */
+    vka_cspace_make_path(&env->slab_vka, consume, &path);
+    remote_consume = sel4utils_copy_path_to_process(&high, path);
+    assert(remote_consume != seL4_CapNull);
+
+    sel4utils_create_word_args(high_args_strings, high_argv, N_HIGH_ARGS, remote_produce,
+                               remote_ep, 0, remote_consume);
+
+    ccnt_t start = 0;
+    ccnt_t end = 0;
+    for (int i = 0; i < N_RUNS; i++) {
+        uint8_t prio = seL4_MaxPrio-2;
+        error = seL4_TCB_SetPriority(high.thread.tcb.cptr, prio);
+        assert(error == 0);
+
+        sel4utils_create_word_args(low_args_strings, low_argv, N_LOW_ARGS, produce,
+                               0, 0, ep, consume);
+
+        error = sel4utils_start_thread(&low, (sel4utils_thread_entry_fn) low_avg_fn, (void *) N_LOW_ARGS, (void *) low_argv, 1);
+        assert(error == seL4_NoError);
+
+        error = sel4utils_spawn_process(&high, &env->slab_vka, &env->vspace, N_HIGH_ARGS, high_argv, 1);
+        assert(error == seL4_NoError);
+ 
+        SEL4BENCH_READ_CCNT(start);
+        benchmark_wait_children(ep, "children of scheduler benchmark", 2);
+        SEL4BENCH_READ_CCNT(end);
+        results[i] = end - start;
+    }
+
+    seL4_TCB_Suspend(high.thread.tcb.cptr);
+    seL4_TCB_Suspend(low.tcb.cptr);
+}
+
 
 static void
 benchmark_prio_processes(env_t *env, seL4_CPtr ep, seL4_CPtr produce, seL4_CPtr consume,
@@ -381,6 +484,9 @@ main(int argc, char **argv)
                                results->thread_results);
     benchmark_prio_processes(env, done_ep.cptr, produce.cptr, consume.cptr,
                                  results->process_results);
+    
+    benchmark_prio_processes_avg(env, done_ep.cptr, produce.cptr, consume.cptr,
+                                 results->scheduler_average);
     benchmark_set_prio_average(results->set_prio_average);
 
     /* thread yield benchmarks */
