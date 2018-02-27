@@ -46,6 +46,7 @@ typedef struct scheduler_results_t {
 
     ccnt_t prio_cold[NUM_THREAD_SIZES][N_RUNS];
     ccnt_t prio_hot[NUM_THREAD_SIZES][N_RUNS];
+    ccnt_t scheduler_average[N_RUNS];
 } scheduler_results_t;
 
 static inline uint8_t

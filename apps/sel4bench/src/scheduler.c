@@ -43,6 +43,12 @@ process_yield_results(scheduler_results_t *results, ccnt_t overhead, json_t *arr
     process_average_results(N_RUNS, NUM_AVERAGE_EVENTS, results->average_yield, average_results);
     json_array_append_new(array, average_counters_to_json("Average seL4_Yield (no thread switch)",
                                                            average_results));
+
+
+    set.name = "signal high prio thread avg";
+    result = process_result(N_RUNS, results->scheduler_average, desc);
+    json_array_append_new(array, result_set_to_json(set));
+
 }
 
 static void
